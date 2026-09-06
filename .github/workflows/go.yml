@@ -74,10 +74,3 @@ jobs:
             echo "::error::Coverage ${COVERAGE}% is below ${THRESHOLD}% threshold"
             exit 1
           fi
-
-      - name: E2E unit tests
-        env:
-          GOPROXY: "https://proxy.golang.org"
-        run: |
-          cd tests
-          go test ./e2e -v

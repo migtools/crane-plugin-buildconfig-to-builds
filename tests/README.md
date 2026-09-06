@@ -4,15 +4,17 @@ Focused unit test suite for validating BuildConfig → Shipwright Build conversi
 
 ## Approach
 
-**Direct plugin execution** - No crane binary or cluster needed!
+**Direct plugin execution + Golden file comparison** - No crane binary or cluster needed!
 
 ```
-BuildConfig YAML → Parse → plugin.Run() → Validate Rules → ✅
+BuildConfig YAML → Parse → plugin.Run() → Compare with Expected Output → ✅
 ```
 
-Tests call the plugin directly as a Go library, validating conversion logic against declarative YAML rules.
+Tests call the plugin directly as a Go library and compare output against expected golden files.
 
 ## Quick Start
+
+**Note:** Tests are run manually/locally on demand (not in CI).
 
 ```bash
 cd tests
@@ -21,13 +23,13 @@ cd tests
 go test ./e2e -v
 
 # Run single test
-go test ./e2e -v -ginkgo.focus="docker-and-s2i"
+go test ./e2e -v -ginkgo.focus="webapp-docker"
 
-# With Ginkgo
-ginkgo tests/e2e/ -v
+# Run only tests with golden files
+go test ./e2e -v -ginkgo.focus="docker|s2i|webapp"
 ```
 
-**Speed:** ~0.012 seconds for 20 tests  
+**Speed:** ~0.012 seconds for 10 tests (with golden files)  
 **Requirements:** Go 1.22+ only (no crane, no cluster)
 
 ## Structure
@@ -72,17 +74,20 @@ tests/
 - Docker + ImageStream (Ruby)
 - S2I + ImageStream (Node.js)
 
-### Two-Level Validation
+### Validation Approach
 
-**1. Rule-Based Validation (13 rules):**
-All tests validate against declarative rules in `rules.yaml`
+**Golden File Comparison:**
+- Tests with expected outputs in `expected_output/` compare complete YAML
+- Exact field-by-field comparison
+- 10 tests currently have golden files
 
-**2. Golden File Comparison (10 tests):**
-Tests with expected outputs in `expected_output/` also compare complete YAML
+**Tests without golden files:**
+- Skipped (incomplete BuildConfigs or Templates)
+- Can be added later as needed
 
-### 13 Validation Rules
+### What's Validated
 
-Defined declaratively in `rules.yaml`:
+When golden files exist, tests validate:
 
 1. **API Version** - Must be `shipwright.io/v1beta1`
 2. **Strategy Mapping**
@@ -102,18 +107,21 @@ Defined declaratively in `rules.yaml`:
 7. **Environment Variables** - Preserved
 8. **Volumes** - Preserved
 
-## What's Tested
+## How Tests Work
 
 Each test:
-1. Parses BuildConfig YAML
-2. Calls `plugin.Run()` directly
+1. Parses BuildConfig YAML from `testdata/buildconfig_yamls/`
+2. Calls `plugin.Run()` directly (no crane binary)
 3. Extracts generated Build resources
-4. Validates against all 13 rules
-5. Reports violations with clear error messages
+4. If golden file exists in `expected_output/`:
+   - Compares actual vs expected YAML (exact match)
+   - Reports any differences
+5. If no golden file: skips validation
 
-**Skip handling:**
-- ✅ JenkinsPipeline BuildConfigs return no Build
-- ✅ Custom strategy BuildConfigs return no Build
+**Test outcomes:**
+- ✅ **Pass** - Build matches expected output exactly
+- ❌ **Fail** - Build differs from expected
+- ⊘ **Skip** - No golden file (incomplete test data)
 
 ## Example Output
 

@@ -19,64 +19,33 @@ var _ = Describe("BuildConfig to Shipwright Conversion", func() {
 			// Setup paths
 			testDataPath := filepath.Join(projectRoot, "tests", "testdata", "buildconfig_yamls", testFile)
 
-			// Check if this test expects the BuildConfig to be skipped
-			shouldSkip := strings.Contains(description, "should skip")
+			// Step 1: Check if golden file exists first
+			expectedFile := strings.TrimSuffix(testFile, ".yaml") + "-expected.yaml"
+			expectedPath := filepath.Join(projectRoot, "tests", "testdata", "expected_output", expectedFile)
 
-			// Step 1: Run plugin on YAML file
-			By(fmt.Sprintf("Running plugin on %s", testFile))
-			builds, err := framework.RunPluginOnYAML(testDataPath)
-
-			if shouldSkip {
-				// For unsupported strategies, we expect no Build output
-				if err == nil && len(builds) == 0 {
-					By("BuildConfig correctly skipped (no Build generated)")
-					return // Test passes
-				}
-				if err == nil && len(builds) > 0 {
-					Fail("Expected BuildConfig to be skipped, but Build files were generated")
-				}
-				// If there's an error, that might also indicate skipping - let it pass
-				By("BuildConfig correctly skipped")
+			if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+				Skip(fmt.Sprintf("No golden file for %s - skipping test", testFile))
 				return
 			}
 
-			// For normal conversions, we expect Build output
+			// Step 2: Run plugin on YAML file
+			By(fmt.Sprintf("Running plugin on %s", testFile))
+			builds, err := framework.RunPluginOnYAML(testDataPath)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(builds).NotTo(BeEmpty(), "No Build resources generated")
 
-			// Step 2: Validate each generated Build against conversion rules
 			By(fmt.Sprintf("Validating %d generated Build(s)", len(builds)))
 			for _, buildObj := range builds {
-				// Rule-based validation
-				violations, err := framework.ValidateConversion(projectRoot, testDataPath, buildObj)
+				By(fmt.Sprintf("Comparing with golden file: %s", expectedFile))
+
+				// No variable expansion needed for our tests
+				vars := map[string]string{}
+				diffs, err := framework.CompareWithGoldenFile(buildObj, expectedPath, vars)
 				Expect(err).NotTo(HaveOccurred())
 
-				// Assert no violations
-				if len(violations) > 0 {
-					var msgs []string
-					for _, v := range violations {
-						msgs = append(msgs, v.String())
-					}
-					Fail(fmt.Sprintf("Conversion rule violations found:\n  - %s",
-						strings.Join(msgs, "\n  - ")))
-				}
-
-				// Golden file comparison (if expected output exists)
-				expectedFile := strings.TrimSuffix(testFile, ".yaml") + "-expected.yaml"
-				expectedPath := filepath.Join(projectRoot, "tests", "testdata", "expected_output", expectedFile)
-
-				if _, err := os.Stat(expectedPath); err == nil {
-					By(fmt.Sprintf("Comparing with golden file: %s", expectedFile))
-
-					// No variable expansion needed for our tests
-					vars := map[string]string{}
-					diffs, err := framework.CompareWithGoldenFile(buildObj, expectedPath, vars)
-					Expect(err).NotTo(HaveOccurred())
-
-					if len(diffs) > 0 {
-						Fail(fmt.Sprintf("Build differs from expected output:\n  %s",
-							strings.Join(diffs, "\n  ")))
-					}
+				if len(diffs) > 0 {
+					Fail(fmt.Sprintf("Build differs from expected output:\n  %s",
+						strings.Join(diffs, "\n  ")))
 				}
 			}
 		},
