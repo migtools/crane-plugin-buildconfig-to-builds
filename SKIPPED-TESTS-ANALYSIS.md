@@ -5,6 +5,18 @@
 **9 tests pass** with golden files  
 **11 tests skip** - Cannot generate expected output
 
+### Test Execution Results
+
+All 11 skipped tests were run through the plugin:
+- **Result:** All return "No Build resources generated" (not errors)
+- **Behavior:** Plugin silently returns empty response
+- **Causes:**
+  - **7 files** (Templates/Lists): Framework cannot find BuildConfig at top level
+  - **2 files** (Missing output): Plugin skips BuildConfigs without `spec.output.to`
+  - **2 files** (Unsupported): Plugin correctly skips JenkinsPipeline and Custom strategies
+
+**Key Finding:** Plugin doesn't error - it just returns nothing. Tests skip gracefully.
+
 ---
 
 ## Issues Breakdown
@@ -152,15 +164,25 @@ Issue: BuildConfig nested in Template.objects[...]
 Real-world: Yes (OpenShift export)
 Fixable: Extract BuildConfig object
 Worth fixing: Maybe (if Templates are in scope)
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: kind: Template (no BuildConfig at top level)
+  Reason: Framework cannot extract BuildConfig from Template
 ```
 
 ### 02-cakephp-mysql.yaml
 ```
-Type: Template
+Type: Template  
 Issue: BuildConfig nested in Template.objects[...]
 Real-world: Yes (OpenShift export)
 Fixable: Extract BuildConfig object
 Worth fixing: Maybe (if Templates are in scope)
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: kind: List (no BuildConfig at top level)
+  Reason: Framework cannot extract BuildConfig from List
 ```
 
 ### 06-jenkins-pipeline.yaml
@@ -170,6 +192,12 @@ Issue: JenkinsPipeline not supported by Shipwright
 Real-world: Yes (common in OpenShift)
 Fixable: No (correct behavior)
 Worth fixing: N/A (working as intended)
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: BuildConfig with strategy.type=JenkinsPipeline
+  Reason: Plugin correctly skips JenkinsPipeline strategy
+  This is EXPECTED behavior ✓
 ```
 
 ### 07-custom-strategy.yaml
@@ -179,6 +207,11 @@ Issue: BuildConfig in List.items[1]
 Real-world: Yes (kubectl export format)
 Fixable: Extract BuildConfig from list
 Worth fixing: Yes
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: kind: List (no BuildConfig at top level)
+  Reason: Framework doesn't extract from List.items
 ```
 
 ### 11-s2i-with-volumes.yaml
@@ -188,6 +221,12 @@ Issue: Missing spec.output.to
 Real-world: No (invalid BuildConfig)
 Fixable: Add spec.output.to
 Worth fixing: Yes
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: Valid BuildConfig
+  Reason: Plugin skips BuildConfigs without spec.output.to
+  Plugin behavior: Returns empty (no error, just skips)
 ```
 
 ### 12-pullsecret-nodejs.yaml
@@ -197,6 +236,12 @@ Issue: Missing spec.output.to
 Real-world: No (invalid BuildConfig)
 Fixable: Add spec.output.to
 Worth fixing: Yes
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: Valid BuildConfig
+  Reason: Plugin skips BuildConfigs without spec.output.to
+  Plugin behavior: Returns empty (no error, just skips)
 ```
 
 ### 13-generic-test-build.yaml
@@ -206,6 +251,11 @@ Issue: BuildConfig in List.items[...]
 Real-world: Yes
 Fixable: Extract BuildConfig
 Worth fixing: Yes
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: kind: List (no BuildConfig at top level)
+  Reason: Framework doesn't extract from List.items
 ```
 
 ### 14-docker-postcommit.yaml
@@ -215,6 +265,11 @@ Issue: BuildConfig in List.items[...]
 Real-world: Yes
 Fixable: Extract BuildConfig
 Worth fixing: Yes
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: kind: List (no BuildConfig at top level)
+  Reason: Framework doesn't extract from List.items
 ```
 
 ### 15-build-with-proxy.yaml
@@ -224,6 +279,11 @@ Issue: BuildConfig in List.items[...]
 Real-world: Yes
 Fixable: Extract BuildConfig
 Worth fixing: Yes
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: kind: List (no BuildConfig at top level)
+  Reason: Framework doesn't extract from List.items
 ```
 
 ### 16-imagesource-cross-namespace.yaml
@@ -233,6 +293,11 @@ Issue: BuildConfig in List.items[...]
 Real-world: Yes
 Fixable: Extract BuildConfig
 Worth fixing: Yes
+
+Test Result:
+  Plugin returned: No Build resources generated
+  Framework sees: kind: List (no BuildConfig at top level)
+  Reason: Framework doesn't extract from List.items
 ```
 
 ---
