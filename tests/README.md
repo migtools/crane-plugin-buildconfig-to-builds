@@ -109,19 +109,29 @@ When golden files exist, tests validate:
 
 ## How Tests Work
 
-Each test:
-1. Parses BuildConfig YAML from `testdata/buildconfig_yamls/`
-2. Calls `plugin.Run()` directly (no crane binary)
-3. Extracts generated Build resources
-4. If golden file exists in `expected_output/`:
+Each test specifies its expected outcome:
+
+1. **`"pass"`** - Expects Build generated and matching golden file
+   - Parses BuildConfig YAML from `testdata/buildconfig_yamls/`
+   - Calls `plugin.Run()` directly (no crane binary)
    - Compares actual vs expected YAML (exact match)
-   - Reports any differences
-5. If no golden file: skips validation
+   - Fails if no Build generated or if it differs from golden file
+
+2. **`"empty"`** - Expects NO Build generated (correct plugin behavior)
+   - Used for JenkinsPipeline strategy (unsupported)
+   - Used for BuildConfigs missing required fields (e.g., spec.output.to)
+   - Asserts plugin correctly returns empty (not an error)
+   - Fails if Build IS generated
+
+3. **`"skip"`** - Skips test (incomplete test data)
+   - Used for Templates/Lists that need unwrapping
+   - Used for tests with known issues
+   - Does not fail the test suite
 
 **Test outcomes:**
-- ✅ **Pass** - Build matches expected output exactly
-- ❌ **Fail** - Build differs from expected
-- ⊘ **Skip** - No golden file (incomplete test data)
+- ✅ **Pass** - Build matches expected (or correctly empty)
+- ❌ **Fail** - Build differs from expected (or unexpected outcome)
+- ⊘ **Skip** - Test explicitly skipped
 
 ## Example Output
 
@@ -241,12 +251,13 @@ Both are valuable:
 
 ## Test Results
 
-### Currently Passing (12/20)
-- ✅ docker-and-s2i
+**Summary:** 12 Passed | 0 Failed | 8 Skipped (20 total)
+
+### Passing Tests (12/20)
+
+**Correct conversions (9 tests):**
 - ✅ webapp-docker
 - ✅ api-s2i
-- ✅ jenkins-pipeline (correctly skipped)
-- ✅ custom-strategy (correctly skipped)
 - ✅ docker-with-envvars
 - ✅ s2i-with-envvars
 - ✅ docker-with-volumes
@@ -255,16 +266,22 @@ Both are valuable:
 - ✅ docker-imagestream-ruby (from PR#60)
 - ✅ s2i-imagestream-nodejs (from PR#60)
 
-### Currently Failing (8/20)
-Templates or incomplete BuildConfigs (expected):
-- ❌ datagrid-hotrod (Template)
-- ❌ cakephp-mysql (Template)
-- ❌ pullsecret-nodejs (incomplete)
-- ❌ generic-test-build (incomplete)
-- ❌ docker-postcommit (incomplete)
-- ❌ build-with-proxy (incomplete)
-- ❌ imagesource-cross-namespace (incomplete)
-- ❌ s2i-with-volumes (incomplete)
+**Correct empty results (3 tests):**
+- ✅ jenkins-pipeline (JenkinsPipeline strategy - unsupported)
+- ✅ s2i-with-volumes (missing spec.output.to)
+- ✅ pullsecret-nodejs (missing spec.output.to)
+
+### Skipped Tests (8/20)
+
+Templates/Lists that need unwrapping:
+- ⊘ datagrid-hotrod (Template wrapper)
+- ⊘ cakephp-mysql (List wrapper)
+- ⊘ docker-and-s2i (Multi-BuildConfig file)
+- ⊘ custom-strategy (List wrapper)
+- ⊘ generic-test-build (List wrapper)
+- ⊘ docker-postcommit (List wrapper)
+- ⊘ build-with-proxy (List wrapper)
+- ⊘ imagesource-cross-namespace (List wrapper)
 
 ## Troubleshooting
 
