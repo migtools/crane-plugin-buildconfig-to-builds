@@ -36,12 +36,10 @@ go test ./e2e -v -ginkgo.focus="docker|s2i|webapp"
 
 ```
 tests/
-├── framework/              # ~750 LOC
-│   ├── plugin.go           # Direct plugin execution
-│   ├── rules.go            # YAML rule loading
-│   ├── rule_evaluator.go   # Type-safe rule evaluation
-│   └── validation.go       # Conversion validation + golden file support
-├── e2e/                    # ~90 LOC  
+├── framework/              # ~270 LOC
+│   ├── plugin.go           # Direct plugin execution (~94 LOC)
+│   └── validation.go       # Golden file comparison (~176 LOC)
+├── e2e/                    # ~100 LOC  
 │   ├── e2e_suite_test.go   # Ginkgo setup
 │   └── conversion_test.go  # DescribeTable with 20 test cases
 ├── testdata/
@@ -50,11 +48,12 @@ tests/
 │   │   ├── ...
 │   │   ├── 19-docker-imagestream-ruby.yaml   # From PR#60
 │   │   └── 20-s2i-imagestream-nodejs.yaml    # From PR#60
-│   └── expected_output/    # 10 expected Build outputs
-│       ├── 03-docker-and-s2i-expected.yaml
+│   └── expected_output/    # 9 expected Build outputs (golden files)
 │       ├── 04-webapp-docker-expected.yaml
+│       ├── 05-api-s2i-expected.yaml
 │       └── ...
-└── rules.yaml              # 13 declarative conversion rules
+├── e2e-cluster.sh          # Cluster-based integration tests (from PR#60)
+└── e2e-transform.sh        # Transform validation (from PR#60)
 ```
 
 ## Test Coverage
@@ -173,26 +172,21 @@ Entry("[#851] my-test", "21-my-test.yaml", "851", "description"),
 go test ./e2e -v -ginkgo.focus="my-test"
 ```
 
-## Extending Validation
+## Extending Tests
 
-### Add New Rule to rules.yaml
+### Add New Golden File Test
 
-```yaml
-- id: RULE-14
-  name: My New Rule
-  description: Validates something important
-  type: field_equals
-  field: build.spec.something
-  expected: expected-value
-```
+1. Create golden file: `tests/testdata/expected_output/21-my-test-expected.yaml`
+2. Add test entry:
+   ```go
+   Entry("[#851] my-test", "21-my-test.yaml", "851", "description", "pass")
+   ```
 
-### Add New Rule Type
+### Add Test Expecting Empty Result
 
-If you need a new rule type, add evaluator in `framework/rule_evaluator.go`:
-
+For unsupported strategies or incomplete BuildConfigs:
 ```go
-case "my_new_type":
-    return evaluateMyNewType(rule, bc, build)
+Entry("[#852] custom", "22-custom.yaml", "852", "Custom strategy", "empty")
 ```
 
 ## CI Integration
@@ -219,12 +213,12 @@ jobs:
 
 ## Benefits
 
-✅ **Fast** - 0.012s vs minutes with crane/cluster  
-✅ **Simple** - No crane binary, no cluster setup  
+✅ **Fast** - 0.011s for all 20 tests  
+✅ **Simple** - No crane binary, no cluster, no rule engine  
 ✅ **Focused** - Tests plugin logic, not crane workflow  
-✅ **Maintainable** - YAML rules instead of hard-coded checks  
-✅ **Type-safe** - Go evaluation, not bash string matching  
-✅ **Comprehensive** - 20 test cases, 13 validation rules  
+✅ **Maintainable** - Golden file comparison only (~270 LOC framework)  
+✅ **Explicit** - Each test declares expected outcome (pass/empty/skip)  
+✅ **Comprehensive** - 20 test cases covering all scenarios  
 
 ## What's NOT Tested
 
