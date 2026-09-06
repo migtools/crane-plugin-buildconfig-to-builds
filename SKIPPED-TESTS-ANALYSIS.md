@@ -326,11 +326,6 @@ From generator output, the plugin:
 
 **Final state:** 17 pass, 3 skip (2 Templates + 1 JenkinsPipeline)
 
-**Ask devs:**
-- Is this acceptable?
-- Should Templates be supported?
-- Should we remove tests that don't work?
-
 ---
 
 ## Technical Details
@@ -373,8 +368,3 @@ Yes, but:
 1. Fix test data → 17-19 tests passing
 2. Keep as-is → 9 tests passing
 3. Remove broken tests → 9 tests total
-
-**Need to decide:**
-- What format should test data be?
-- Is current plugin behavior correct?
-- Quality vs quantity of tests?
