@@ -1,6 +1,6 @@
 module generate-expected
 
-go 1.26.3
+go 1.25.6
 
 replace github.com/migtools/crane-plugin-buildconfig-to-shipwright => ../../
 
