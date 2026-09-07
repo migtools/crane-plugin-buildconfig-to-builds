@@ -1,13 +1,16 @@
-name: Go build and unit tests
+name: Go build and tests
 
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    name: Build and unit test
+    name: Build, unit tests, and E2E tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out source code
@@ -74,3 +77,13 @@ jobs:
             echo "::error::Coverage ${COVERAGE}% is below ${THRESHOLD}% threshold"
             exit 1
           fi
+
+      - name: E2E plugin conversion tests
+        env:
+          GOPROXY: "https://proxy.golang.org"
+          GOTOOLCHAIN: auto
+        run: |
+          cd tests
+          go test ./e2e -v
+          echo "## E2E Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "✅ Plugin conversion tests passed" >> "$GITHUB_STEP_SUMMARY"
