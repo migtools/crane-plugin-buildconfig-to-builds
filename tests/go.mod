@@ -2,9 +2,11 @@ module github.com/konveyor/crane-plugin-buildconfig-to-shipwright/tests
 
 go 1.26.3
 
+replace github.com/migtools/crane-plugin-buildconfig-to-shipwright => ../
+
 require (
 	github.com/konveyor/crane-lib v0.1.6-0.20260807130033-222a325c7cee
-	github.com/migtools/crane-plugin-buildconfig-to-shipwright v0.0.0-20260826144320-b05b610a8823
+	github.com/migtools/crane-plugin-buildconfig-to-shipwright v0.0.0
 	github.com/onsi/ginkgo/v2 v2.31.0
 	github.com/onsi/gomega v1.42.0
 	github.com/sirupsen/logrus v1.10.2

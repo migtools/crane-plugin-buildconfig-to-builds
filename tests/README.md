@@ -191,23 +191,24 @@ Entry("[#852] custom", "22-custom.yaml", "852", "Custom strategy", "empty")
 
 ## CI Integration
 
-```yaml
-# .github/workflows/test.yml
-name: Plugin Tests
-on: [push, pull_request]
+E2E tests run automatically on every PR and push to main via GitHub Actions.
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.22'
-      
-      - name: Run Unit Tests
-        run: go test ./tests/e2e -v
+**Workflow:** `.github/workflows/go.yml`
+
+```yaml
+- name: E2E plugin conversion tests
+  env:
+    GOPROXY: "https://proxy.golang.org"
+  run: |
+    cd tests
+    go test ./e2e -v
+    echo "## E2E Test Results" >> "$GITHUB_STEP_SUMMARY"
+    echo "✅ Plugin conversion tests passed" >> "$GITHUB_STEP_SUMMARY"
 ```
+
+**Runs on:**
+- All pull requests (gates merging)
+- Push to main branch (post-merge validation)
 
 **No dependencies needed in CI** - just Go!
 
