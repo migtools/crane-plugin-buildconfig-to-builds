@@ -81,6 +81,7 @@ jobs:
       - name: E2E plugin conversion tests
         env:
           GOPROXY: "https://proxy.golang.org"
+          GOTOOLCHAIN: auto
         run: |
           cd tests
           go test ./e2e -v
