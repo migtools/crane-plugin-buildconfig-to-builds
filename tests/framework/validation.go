@@ -49,7 +49,7 @@ func expandVars(s string, vars map[string]string) string {
 
 // compareMaps recursively compares two maps and collects differences.
 func compareMaps(path string, expected, actual map[string]interface{}, diffs *[]string) {
-	// Check for missing keys in actual
+	// Check for missing keys in actual (expected fields not present)
 	for key := range expected {
 		currentPath := key
 		if path != "" {
@@ -66,6 +66,18 @@ func compareMaps(path string, expected, actual map[string]interface{}, diffs *[]
 
 		// Compare values recursively
 		compareValues(currentPath, expectedVal, actualVal, diffs)
+	}
+
+	// Check for unexpected keys in actual (extra fields not in expected)
+	for key := range actual {
+		currentPath := key
+		if path != "" {
+			currentPath = path + "." + key
+		}
+
+		if _, exists := expected[key]; !exists {
+			*diffs = append(*diffs, fmt.Sprintf("unexpected field: %s", currentPath))
+		}
 	}
 }
 

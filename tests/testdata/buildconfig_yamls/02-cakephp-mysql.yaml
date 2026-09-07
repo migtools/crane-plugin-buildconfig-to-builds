@@ -2,10 +2,10 @@ apiVersion: v1
 items:
 - apiVersion: v1
   data:
-    cakephp-secret-token: MnBoVnZmQ19ubWU0SkJ2dUJldWRHRDdNWmdQX1lYWVRieVl0SzBCQUxVQkJQQUxtdVE=
-    cakephp-security-salt: bUllVWk0Y0xyWHE2bHd0Z0ZFM2RZVkxDTDNWcG53ZHZiVFlCM3JVRQ==
-    database-password: a2lxcHJDeTg3SG9TZkhJMA==
-    database-user: Y2FrZXBocA==
+    cakephp-secret-token: ZHVtbXktdG9rZW4tZm9yLXRlc3Rpbmctb25seQ==
+    cakephp-security-salt: ZHVtbXktc2FsdC1mb3ItdGVzdGluZy1vbmx5
+    database-password: ZHVtbXlwYXNzd29yZA==
+    database-user: dGVzdHVzZXI=
   kind: Secret
   metadata:
     annotations:
@@ -114,7 +114,7 @@ items:
       type: ImageChange
     - type: ConfigChange
     - github:
-        secret: W52MuaLhhwowN1M2RFKWiRkdgBwfoaYJ7Iqi4PTL
+        secret: dummy-webhook-secret-for-testing-only
       type: GitHub
   status:
     lastVersion: 0
@@ -345,7 +345,7 @@ items:
               - /bin/sh
               - -i
               - -c
-              - MYSQL_PWD='kiqprCy87HoSfHI0' mysql -h 127.0.0.1 -u cakephp -D default
+              - MYSQL_PWD='dummypassword' mysql -h 127.0.0.1 -u testuser -D default
                 -e 'SELECT 1'
             failureThreshold: 3
             initialDelaySeconds: 5
