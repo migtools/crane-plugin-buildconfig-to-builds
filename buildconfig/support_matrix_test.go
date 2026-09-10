@@ -268,7 +268,7 @@ func quotedWarnings(t *testing.T, doc string) map[string]string {
 	if next := strings.Index(section, "\n## "); next >= 0 {
 		section = section[:next]
 	}
-	row := regexp.MustCompile("(?m)^\\| W(\\d+) \\| ([^\n]*)$")
+	row := regexp.MustCompile("(?m)^\\| (?:<a [^>]*></a>)?W(\\d+) \\| ([^\n]*)$")
 	quote := regexp.MustCompile("`([^`]+)`")
 	prose := regexp.MustCompile(`^W\d+( (or|to|and) W\d+)*, `)
 	retired := regexp.MustCompile(`^Retired by BUILD-[0-9]+\b`)
