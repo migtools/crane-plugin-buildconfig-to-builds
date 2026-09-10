@@ -1467,12 +1467,12 @@ func TestConvertInsecureRegistriesRouting(t *testing.T) {
 		wantParamVals []string
 	}{
 		{
-			name:         "docker gets registries-insecure param",
-			strategyType: "Docker",
-			outputImage:  "reg.local:80/org/app:latest",
-			extras:       map[string]string{"insecure-registries": "reg.local:80"},
-			wantInsecure: nil,
-			wantParam:    true,
+			name:          "docker gets registries-insecure param",
+			strategyType:  "Docker",
+			outputImage:   "reg.local:80/org/app:latest",
+			extras:        map[string]string{"insecure-registries": "reg.local:80"},
+			wantInsecure:  nil,
+			wantParam:     true,
 			wantParamVals: []string{"reg.local:80"},
 		},
 		{
@@ -3838,26 +3838,7 @@ func TestConvertRunPolicyWiring(t *testing.T) {
 // converted Build's annotations alongside the captured log entries.
 func runSAConversion(t *testing.T, spec map[string]interface{}) (map[string]string, *logrustest.Hook) {
 	t.Helper()
-	logger, hook := logrustest.NewNullLogger()
-	plugin := &BuildConfigTransformPlugin{Log: logger}
-	request := transform.PluginRequest{
-		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
-			"apiVersion": "build.openshift.io/v1",
-			"kind":       "BuildConfig",
-			"metadata": map[string]interface{}{
-				"name":      "myapp",
-				"namespace": "myns",
-			},
-			"spec": spec,
-		}},
-	}
-	resp, err := plugin.Run(request)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(resp.NewResources) < 1 {
-		t.Fatal("expected at least 1 new resource")
-	}
+	resp, hook := runSAConversionResponse(t, spec, nil)
 	return resp.NewResources[0].GetAnnotations(), hook
 }
 
@@ -3903,11 +3884,11 @@ func TestServiceAccountAssociationWarned(t *testing.T) {
 		"serviceAccount": "custom-builder-sa",
 	}))
 
-	warnings := logMessages(hook, logrus.WarnLevel, "may carry additional secrets")
+	warnings := logMessages(hook, logrus.WarnLevel, "crane migrates ServiceAccount")
 	if len(warnings) != 1 {
 		t.Fatalf("expected exactly 1 ServiceAccount association warning, got %d: %v", len(warnings), warnings)
 	}
-	for _, want := range []string{`"custom-builder-sa"`, "myns/myapp", "imagePullSecrets", "RBAC bindings", "target cluster"} {
+	for _, want := range []string{`"custom-builder-sa"`, "myns/myapp", "RoleBindings", "secrets list", "--for=mount", "_cluster", "SCC"} {
 		if !strings.Contains(warnings[0], want) {
 			t.Errorf("warning missing %q: %s", want, warnings[0])
 		}
@@ -3919,7 +3900,7 @@ func TestServiceAccountAssociationNotWarnedWhenUnset(t *testing.T) {
 	// cluster, so there are no associations to carry over and no warning.
 	_, hook := runSAConversion(t, saSpec(nil))
 
-	if warnings := logMessages(hook, logrus.WarnLevel, "may carry additional secrets"); len(warnings) != 0 {
+	if warnings := logMessages(hook, logrus.WarnLevel, "crane migrates ServiceAccount"); len(warnings) != 0 {
 		t.Errorf("expected no ServiceAccount association warning, got: %v", warnings)
 	}
 }
@@ -3941,7 +3922,7 @@ func TestServiceAccountAssociationNotWarnedForGeneratedSA(t *testing.T) {
 		},
 	}))
 
-	if warnings := logMessages(hook, logrus.WarnLevel, "may carry additional secrets"); len(warnings) != 0 {
+	if warnings := logMessages(hook, logrus.WarnLevel, "crane migrates ServiceAccount"); len(warnings) != 0 {
 		t.Errorf("expected no association warning for a converter-generated ServiceAccount, got: %v", warnings)
 	}
 }
@@ -3971,16 +3952,204 @@ func TestServiceAccountMappedToTemplateLogged(t *testing.T) {
 	}
 }
 
-func TestServiceAccountMappedNotLoggedWithoutTemplate(t *testing.T) {
-	// No resources means no BuildRun template today, so nothing was mapped and
-	// the INFO must stay silent — while the WARN above still fires. Once
-	// BUILD-2314 always emits a template, this expectation flips to 1.
-	_, hook := runSAConversion(t, saSpec(map[string]interface{}{
+func TestServiceAccountMappedLoggedWithoutResources(t *testing.T) {
+	// A named account is enough for a template (ADR-0010), so the INFO fires
+	// without resources too. Before BUILD-2402 this case wrote no template and
+	// the account name reached no emitted object.
+	annotations, hook := runSAConversion(t, saSpec(map[string]interface{}{
 		"serviceAccount": "custom-builder-sa",
 	}))
 
-	if infos := logMessages(hook, logrus.InfoLevel, "Mapped serviceAccount"); len(infos) != 0 {
-		t.Errorf("expected no mapped-serviceAccount info when no template is written, got: %v", infos)
+	if _, ok := annotations[BuildRunTemplateAnnotation]; !ok {
+		t.Fatalf("expected annotation %s, got: %v", BuildRunTemplateAnnotation, annotations)
+	}
+	if infos := logMessages(hook, logrus.InfoLevel, "Mapped serviceAccount"); len(infos) != 1 {
+		t.Errorf("expected exactly 1 mapped-serviceAccount info, got %d: %v", len(infos), infos)
+	}
+}
+
+// runSAConversionResponse is runSAConversion returning the whole response, for
+// tests that look past the Build, plus optional extras such as a strategy
+// override.
+func runSAConversionResponse(t *testing.T, spec map[string]interface{}, extras map[string]string) (transform.PluginResponse, *logrustest.Hook) {
+	t.Helper()
+	logger, hook := logrustest.NewNullLogger()
+	plugin := &BuildConfigTransformPlugin{Log: logger}
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata": map[string]interface{}{
+				"name":      "myapp",
+				"namespace": "myns",
+			},
+			"spec": spec,
+		}},
+		Extras: extras,
+	}
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.NewResources) < 1 {
+		t.Fatal("expected at least 1 new resource")
+	}
+	return resp, hook
+}
+
+func TestServiceAccountTemplateWrittenWithoutResources(t *testing.T) {
+	// BUILD-2402 D-2: a named account and no resources still gets a template,
+	// carrying the name and nothing about resources: no stepResources, and
+	// neither the resources warning nor the custom-strategy step-names one.
+	resp, hook := runSAConversionResponse(t, saSpec(map[string]interface{}{
+		"serviceAccount": "custom-builder-sa",
+	}), nil)
+
+	value, ok := resp.NewResources[0].GetAnnotations()[BuildRunTemplateAnnotation]
+	if !ok {
+		t.Fatalf("expected annotation %s on the Build", BuildRunTemplateAnnotation)
+	}
+	tmpl := unmarshalBuildRunTemplate(t, value)
+	if tmpl.Spec.ServiceAccount == nil || *tmpl.Spec.ServiceAccount != "custom-builder-sa" {
+		t.Errorf("expected serviceAccount custom-builder-sa, got %v", tmpl.Spec.ServiceAccount)
+	}
+	if tmpl.Spec.Build.Name == nil || *tmpl.Spec.Build.Name != "myapp" {
+		t.Errorf("expected build.name myapp, got %v", tmpl.Spec.Build.Name)
+	}
+	if len(tmpl.Spec.StepResources) != 0 {
+		t.Errorf("expected no stepResources without spec.resources, got %v", tmpl.Spec.StepResources)
+	}
+	if strings.Contains(value, "stepResources") {
+		t.Errorf("template YAML must not carry a stepResources key without resources:\n%s", value)
+	}
+	for _, unwanted := range []string{"Resource requirements are not supported", "custom mapping with unknown step names"} {
+		if got := logMessages(hook, logrus.WarnLevel, unwanted); len(got) != 0 {
+			t.Errorf("unexpected resources warning without spec.resources: %v", got)
+		}
+	}
+}
+
+func TestServiceAccountTemplateCustomStrategyWithoutResources(t *testing.T) {
+	// Under a strategy override the step names are unknown, which only matters
+	// when there are resources to put on them. With an account and no
+	// resources the template is written and the step-names warning stays quiet.
+	resp, hook := runSAConversionResponse(t, saSpec(map[string]interface{}{
+		"serviceAccount": "custom-builder-sa",
+	}), map[string]string{"default-build-strategy": "s2i=my-custom-s2i"})
+
+	value, ok := resp.NewResources[0].GetAnnotations()[BuildRunTemplateAnnotation]
+	if !ok {
+		t.Fatalf("expected annotation %s on the Build", BuildRunTemplateAnnotation)
+	}
+	tmpl := unmarshalBuildRunTemplate(t, value)
+	if tmpl.Spec.ServiceAccount == nil || *tmpl.Spec.ServiceAccount != "custom-builder-sa" {
+		t.Errorf("expected serviceAccount custom-builder-sa, got %v", tmpl.Spec.ServiceAccount)
+	}
+	if got := logMessages(hook, logrus.WarnLevel, "custom mapping with unknown step names"); len(got) != 0 {
+		t.Errorf("unexpected step-names warning without spec.resources: %v", got)
+	}
+}
+
+func TestGeneratedServiceAccountTemplateWrittenWithoutResources(t *testing.T) {
+	// BUILD-2402 D-2: the generated account is only useful if a BuildRun runs
+	// as it. Before this the account was emitted and, without resources,
+	// nothing named it.
+	resp, _ := runSAConversionResponse(t, saSpec(map[string]interface{}{
+		"strategy": map[string]interface{}{
+			"type": "Source",
+			"sourceStrategy": map[string]interface{}{
+				"from": map[string]interface{}{
+					"kind": "DockerImage",
+					"name": "registry.example.com/builder:latest",
+				},
+				"pullSecret": map[string]interface{}{"name": "my-pull-secret"},
+			},
+		},
+	}), nil)
+
+	var build, sa *unstructured.Unstructured
+	for i := range resp.NewResources {
+		switch resp.NewResources[i].GetKind() {
+		case "Build":
+			build = &resp.NewResources[i]
+		case "ServiceAccount":
+			sa = &resp.NewResources[i]
+		}
+	}
+	if build == nil || sa == nil {
+		t.Fatalf("expected a Build and a ServiceAccount, got %d resources", len(resp.NewResources))
+	}
+	value, ok := build.GetAnnotations()[BuildRunTemplateAnnotation]
+	if !ok {
+		t.Fatalf("expected annotation %s on the Build", BuildRunTemplateAnnotation)
+	}
+	tmpl := unmarshalBuildRunTemplate(t, value)
+	if tmpl.Spec.ServiceAccount == nil || *tmpl.Spec.ServiceAccount != sa.GetName() {
+		t.Errorf("expected serviceAccount %q (the generated account), got %v", sa.GetName(), tmpl.Spec.ServiceAccount)
+	}
+	if len(tmpl.Spec.StepResources) != 0 {
+		t.Errorf("expected no stepResources without spec.resources, got %v", tmpl.Spec.StepResources)
+	}
+}
+
+// TestCraneDefaultRBACAccountsMembership pins the set of accounts crane drops.
+// Membership decides which BuildConfigs get W67 instead of W9, so a name added
+// or removed here has to be a deliberate edit with a matching support-matrix row.
+func TestCraneDefaultRBACAccountsMembership(t *testing.T) {
+	want := []string{"builder", "deployer", "default"}
+	if len(craneDefaultRBACAccounts) != len(want) {
+		t.Fatalf("craneDefaultRBACAccounts = %v, want %v", craneDefaultRBACAccounts, want)
+	}
+	for i, name := range want {
+		if craneDefaultRBACAccounts[i] != name {
+			t.Errorf("craneDefaultRBACAccounts[%d] = %q, want %q", i, craneDefaultRBACAccounts[i], name)
+		}
+	}
+	if isCraneDefaultRBACAccount("") {
+		t.Error("isCraneDefaultRBACAccount(\"\") = true, want false: an unnamed account gets no warning")
+	}
+	if isCraneDefaultRBACAccount("pipeline") {
+		t.Error("isCraneDefaultRBACAccount(\"pipeline\") = true, want false: crane does not drop the pipeline account")
+	}
+}
+
+func TestServiceAccountBuilderAndDeployerWarnedSeparately(t *testing.T) {
+	// BUILD-2402 D-4: crane drops these accounts under strip-default-rbac
+	// (crane-plugin-openshift for builder and deployer, crane-lib for default),
+	// so the migration-carries-it warning would be wrong for them. They get W67
+	// instead of W9, and the template still names them.
+	// The list is spelled out rather than ranged over craneDefaultRBACAccounts:
+	// ranging over the production var would only assert the code agrees with
+	// itself, so adding a fourth name would change which BuildConfigs get W67
+	// with the suite still green. TestCraneDefaultRBACAccountsMembership pins
+	// the var itself.
+	for _, name := range []string{"builder", "deployer", "default"} {
+		t.Run(name, func(t *testing.T) {
+			annotations, hook := runSAConversion(t, saSpec(map[string]interface{}{
+				"serviceAccount": name,
+			}))
+
+			dropped := logMessages(hook, logrus.WarnLevel, "the migration does not carry over")
+			if len(dropped) != 1 {
+				t.Fatalf("expected exactly 1 dropped-account warning, got %d: %v", len(dropped), dropped)
+			}
+			for _, want := range []string{`"` + name + `"`, "myns/myapp", "pipeline account", "pipelines-scc"} {
+				if !strings.Contains(dropped[0], want) {
+					t.Errorf("warning missing %q: %s", want, dropped[0])
+				}
+			}
+			if migrated := logMessages(hook, logrus.WarnLevel, "crane migrates ServiceAccount"); len(migrated) != 0 {
+				t.Errorf("expected no migrated-account warning for %s, got: %v", name, migrated)
+			}
+			value, ok := annotations[BuildRunTemplateAnnotation]
+			if !ok {
+				t.Fatalf("expected annotation %s on the Build", BuildRunTemplateAnnotation)
+			}
+			tmpl := unmarshalBuildRunTemplate(t, value)
+			if tmpl.Spec.ServiceAccount == nil || *tmpl.Spec.ServiceAccount != name {
+				t.Errorf("expected serviceAccount %s, got %v", name, tmpl.Spec.ServiceAccount)
+			}
+		})
 	}
 }
 
@@ -4115,5 +4284,42 @@ func TestConvertRegistryParamsEdgeCases(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDroppedServiceAccountWithPullSecretWarnsTwiceWithoutContradiction(t *testing.T) {
+	// builder plus a pull secret is the one input where W8 and W67 both fire on
+	// one Build. W8 must not claim crane migrates the account, because W67 says
+	// crane drops it; the link command still targets the account the template
+	// names, which exists in every OpenShift namespace.
+	_, hook := runSAConversion(t, saSpec(map[string]interface{}{
+		"serviceAccount": "builder",
+		"strategy": map[string]interface{}{
+			"type": "Source",
+			"sourceStrategy": map[string]interface{}{
+				"from": map[string]interface{}{
+					"kind": "DockerImage",
+					"name": "registry.example.com/builder:latest",
+				},
+				"pullSecret": map[string]interface{}{"name": "my-pull-secret"},
+			},
+		},
+	}))
+
+	link := logMessages(hook, logrus.WarnLevel, "secrets link")
+	if len(link) != 1 {
+		t.Fatalf("expected exactly 1 pull-secret link warning, got %d: %v", len(link), link)
+	}
+	if strings.Contains(link[0], "migrates") {
+		t.Errorf("W8 must not claim crane migrates a dropped account: %s", link[0])
+	}
+	if !strings.Contains(link[0], "oc -n myns secrets link builder my-pull-secret --for=pull,mount") {
+		t.Errorf("W8 lost its command tail: %s", link[0])
+	}
+	if dropped := logMessages(hook, logrus.WarnLevel, "the migration does not carry over"); len(dropped) != 1 {
+		t.Errorf("expected exactly 1 dropped-account warning, got %d: %v", len(dropped), dropped)
+	}
+	if migrated := logMessages(hook, logrus.WarnLevel, "crane migrates ServiceAccount"); len(migrated) != 0 {
+		t.Errorf("expected no migrated-account warning for builder, got: %v", migrated)
 	}
 }

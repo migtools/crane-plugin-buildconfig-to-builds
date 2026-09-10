@@ -163,10 +163,11 @@ not exist on `main` yet. They are listed here so the table is complete when thos
 - On OpenShift, `kubectl get build/<name>` is the OpenShift Build API. Write
   `build.shipwright.io/<name>`.
 - A BuildRun with `serviceAccount` unset runs as the namespace `pipeline` account. That is
-  right only when the plugin generated no ServiceAccount. When it did, the generated account
-  carries the BuildConfig's pull secret and the plugin names it in the
-  `buildconfig-to-shipwright/buildrun-template` annotation, so point the BuildRun at it or
-  the builder image will not pull. Grant it the SCC scoped to that one account,
+  right only when the BuildConfig named no ServiceAccount and the plugin generated none.
+  Otherwise the `buildconfig-to-shipwright/buildrun-template` annotation names the account
+  the BuildRun must use, so point the BuildRun at it: a generated account carries the
+  BuildConfig's pull secret and the builder image will not pull without it. Grant a
+  generated account the SCC scoped to that one account,
   `oc adm policy add-scc-to-user pipelines-scc -z <generated-sa> -n <namespace>`. Never bind
   it with `-g system:serviceaccounts` or to the namespace default account.
 

@@ -65,6 +65,19 @@ const (
 	VolumeMigrationDoc = "docs/volume-migration.md in the crane-plugin-buildconfig-to-shipwright repository"
 )
 
+// craneDefaultRBACAccounts are the ServiceAccounts crane drops from a migration
+// by default under strip-default-rbac: crane-plugin-openshift drops builder and
+// deployer, crane-lib's KubernetesPlugin drops default. This is another tool's
+// behaviour, not a rule of this plugin (ADR-0011), so it is named once here and
+// read by both the warning that depends on it and its test.
+var craneDefaultRBACAccounts = []string{"builder", "deployer", "default"}
+
+// isCraneDefaultRBACAccount reports whether crane drops this account from the
+// migration by default, so it will not exist on the target.
+func isCraneDefaultRBACAccount(name string) bool {
+	return slices.Contains(craneDefaultRBACAccounts, name)
+}
+
 // The per-BuildConfig conversion outcome model (OutcomeState, Outcome, the
 // outcome* constructors) and the warnf warning recorder live in outcome.go.
 
@@ -158,7 +171,7 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 			// an atomic list on apply). Leave the account alone and tell the
 			// operator how to attach the pull secret on the target.
 			ns, sa, secret := bc.Namespace, bc.Spec.ServiceAccount, pullSecret.Name
-			c.warnf("BuildConfig %s/%s names ServiceAccount %q and pull secret %q. crane migrates that ServiceAccount as-is and this conversion does not modify it, so attach the pull secret on the target cluster before running the BuildRun: oc -n %s secrets link %s %s --for=pull,mount",
+			c.warnf("BuildConfig %s/%s names ServiceAccount %q and pull secret %q. This conversion does not modify that ServiceAccount (the ServiceAccount warning on this Build describes how crane handles it), so attach the pull secret on the target cluster before running the BuildRun: oc -n %s secrets link %s %s --for=pull,mount",
 				ns, bc.Name, sa, secret, ns, sa, secret)
 		} else {
 			sa := c.generateServiceAccount(bc, pullSecret)
@@ -171,16 +184,23 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 		}
 	}
 
-	// A ServiceAccount named by the BuildConfig exists on the source cluster and
-	// carries associations this conversion cannot see, let alone migrate: secrets,
-	// imagePullSecrets, RoleBindings/ClusterRoleBindings, and SCC associations.
-	// Crane converts BuildConfigs, not RBAC objects, so those stay behind. Without
-	// this warning the failure surfaces much later and far from its cause — either
-	// the BuildRun runs as the namespace default ServiceAccount and fails on an
-	// image pull or push, or it fails outright with ServiceAccountNotFound.
-	if bc.Spec.ServiceAccount != "" {
-		c.warnf("The original ServiceAccount %q on BuildConfig %s/%s may carry additional secrets, imagePullSecrets, and RBAC bindings. Verify these associations are available in the target cluster for the Shipwright BuildRun.",
-			bc.Spec.ServiceAccount, bc.Namespace, bc.Name)
+	// A ServiceAccount named by the BuildConfig is migrated by crane, not by this
+	// plugin: crane export writes the account, its user-created Secrets, its
+	// RoleBindings, and the ClusterRoleBindings, ClusterRoles and SCCs that name
+	// it, and each passes through here untouched (ADR-0011). Two things do not
+	// come across. crane-lib's KubernetesPlugin clears every account's secrets
+	// list, so a secret linked with --for=mount is gone (BUILD-2343), and the
+	// builder, deployer and default accounts are dropped under strip-default-rbac
+	// (crane-plugin-openshift for the first two, crane-lib's KubernetesPlugin for
+	// default). The plugin cannot see the account, so it cannot tell which case
+	// applies; the warning names what to check. Step 17 writes the name into the
+	// BuildRun template either way.
+	if sa := bc.Spec.ServiceAccount; isCraneDefaultRBACAccount(sa) {
+		c.warnf("BuildConfig %s/%s names ServiceAccount %q, which the migration does not carry over: crane-lib drops default under strip-default-rbac, and crane-plugin-openshift drops builder and deployer when it is in the plugin directory. The BuildRun template names it anyway. On the target, point the BuildRun at the pipeline account, which already holds the pipelines-scc grant. Do not grant that SCC to the namespace's default account: every pod that names no account runs as it.",
+			bc.Namespace, bc.Name, sa)
+	} else if sa != "" {
+		c.warnf("crane migrates ServiceAccount %q named by BuildConfig %s/%s, with its RoleBindings and any ClusterRoleBinding, ClusterRole or SCC that names it, if the account was in the export. It does not carry the account's secrets list: re-link any secret that was linked with --for=mount, apply the exported _cluster resources (no --skip-cluster-scoped), and confirm the account holds the SCC the build strategy needs before running the BuildRun.",
+			sa, bc.Namespace, bc.Name)
 	}
 
 	// Inline Dockerfile → ConfigMap, before processSource so a BuildConfig skipped
@@ -1204,16 +1224,29 @@ func (c *Converter) addRegistries(b *shipwrightv1beta1.Build) {
 	}
 }
 
-// processResources carries BuildConfig spec.resources forward as a BuildRun
-// template annotation on the converted Build. The Shipwright Build CRD has no
-// resources field — per-step overrides live on BuildRun.spec.stepResources —
+// processResources renders a BuildRun template annotation on the converted
+// Build whenever it would carry BuildConfig spec.resources as stepResources, a
+// ServiceAccount name (generated or spec.serviceAccount), or both (ADR-0010).
+// The Shipwright Build CRD has neither field: per-step overrides live on
+// BuildRun.spec.stepResources and the account on BuildRun.spec.serviceAccount,
 // and emitting a real BuildRun into the migration stream would immediately
 // trigger a build on the target cluster. The annotation is inert: the user
 // reviews the template, copies it out, and applies it when they want to run
 // a build. See BUILD-2261.
 func (c *Converter) processResources(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build, generatedSA string) error {
 	res := bc.Spec.Resources
-	if len(res.Requests) == 0 && len(res.Limits) == 0 {
+	hasResources := len(res.Requests) > 0 || len(res.Limits) > 0
+
+	// The template is the only place the account name can go: a Build has no
+	// serviceAccount field. It is written whenever it carries something the
+	// Build cannot hold, stepResources or a serviceAccount (ADR-0010). The
+	// generated account wins when there is one; it is only ever generated when
+	// the BuildConfig names none, so the two never compete.
+	saName := generatedSA
+	if saName == "" {
+		saName = bc.Spec.ServiceAccount
+	}
+	if !hasResources && saName == "" {
 		return nil
 	}
 
@@ -1223,19 +1256,23 @@ func (c *Converter) processResources(bc *buildv1.BuildConfig, b *shipwrightv1bet
 	// When the strategy has been overridden to a custom ClusterBuildStrategy
 	// via strategy mapping, its step names are unknown — emitting the default
 	// names would make Shipwright reject the BuildRun at admission, so
-	// stepResources are omitted and the user is told to fill them in.
+	// stepResources are omitted and the user is told to fill them in. Without
+	// resources there is nothing to put in stepResources, so the names do not
+	// matter and no warning about them is due.
 	var stepNames []string
-	switch bc.Spec.Strategy.Type {
-	case buildv1.DockerBuildStrategyType:
-		if b.Spec.Strategy.Name == defaultDockerStrategy {
-			stepNames = []string{"build-and-push"}
+	if hasResources {
+		switch bc.Spec.Strategy.Type {
+		case buildv1.DockerBuildStrategyType:
+			if b.Spec.Strategy.Name == defaultDockerStrategy {
+				stepNames = []string{"build-and-push"}
+			}
+		case buildv1.SourceBuildStrategyType:
+			if b.Spec.Strategy.Name == defaultS2IStrategy {
+				stepNames = []string{"s2i-generate", "buildah"}
+			}
+		default:
+			return nil
 		}
-	case buildv1.SourceBuildStrategyType:
-		if b.Spec.Strategy.Name == defaultS2IStrategy {
-			stepNames = []string{"s2i-generate", "buildah"}
-		}
-	default:
-		return nil
 	}
 
 	// The spec is built from Shipwright typed structs so field names cannot
@@ -1245,14 +1282,8 @@ func (c *Converter) processResources(bc *buildv1.BuildConfig, b *shipwrightv1bet
 	spec := shipwrightv1beta1.BuildRunSpec{
 		Build: shipwrightv1beta1.ReferencedBuild{Name: &b.Name},
 	}
-	if generatedSA != "" {
-		sa := generatedSA
-		spec.ServiceAccount = &sa
-	} else if bc.Spec.ServiceAccount != "" {
-		// Preserve an explicitly configured ServiceAccount even when no
-		// pull secret forced us to generate one.
-		sa := bc.Spec.ServiceAccount
-		spec.ServiceAccount = &sa
+	if saName != "" {
+		spec.ServiceAccount = &saName
 	}
 	for _, step := range stepNames {
 		spec.StepResources = append(spec.StepResources, shipwrightv1beta1.StepResourceOverride{
@@ -1292,6 +1323,10 @@ func (c *Converter) processResources(bc *buildv1.BuildConfig, b *shipwrightv1bet
 	if spec.ServiceAccount != nil {
 		c.Log.Infof("Mapped serviceAccount %q to BuildRun template in annotation %s for BuildConfig %s/%s",
 			*spec.ServiceAccount, BuildRunTemplateAnnotation, bc.Namespace, bc.Name)
+	}
+
+	if !hasResources {
+		return nil
 	}
 
 	if len(stepNames) == 0 {

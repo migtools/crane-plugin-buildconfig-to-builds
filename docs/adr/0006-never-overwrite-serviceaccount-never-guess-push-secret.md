@@ -43,8 +43,9 @@ different remedy in each warning.
   with evidence that operators cannot set `spec.output.pushSecret` themselves.
 - On OpenShift with the Builds operator, a generated account cannot run a build pod until
   it is granted the `pipelines-scc` security context constraint. The default `pipeline`
-  account has it; a generated one does not. BUILD-2402 is the story about migrating the
-  account's permissions rather than warning.
+  account has it; a generated one does not. BUILD-2402 settled that crane, not the plugin,
+  carries a named account's permissions (ADR-0011); the grant for a generated account stays
+  a manual step until a story emits it.
 - buildah uses the account's pull secret to pull the base image, so the secret must be a
   valid credential for that registry. A placeholder that names the registry breaks the
   pull.
