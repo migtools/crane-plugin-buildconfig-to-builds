@@ -26,9 +26,11 @@ For every resource in a crane export:
   takes one source per Build, so a BuildConfig with more than one source type fails here.
   Neither stops the migration.
 
-Every field the plugin drops or changes produces a warning, in the log and in an annotation
-on the Build. The annotation is size-capped, so on a very lossy BuildConfig the log is the
+Every field the plugin reads and then drops or changes produces a warning, in the log and in
+an annotation on the Build. The few fields it never reads are listed in the support matrix. The annotation is size-capped, so on a very lossy BuildConfig the log is the
 complete list. The full list, field by field, is in [docs/support-matrix.md](docs/support-matrix.md).
+The short list of what does not migrate, and what is planned, is in
+[docs/known-limitations.md](docs/known-limitations.md).
 
 | BuildConfig strategy | Shipwright ClusterBuildStrategy | Outcome |
 |---|---|---|
@@ -191,6 +193,7 @@ to the target registry. The plugin warns either way.
 | Page | For |
 |---|---|
 | [docs/support-matrix.md](docs/support-matrix.md) | every BuildConfig field: what happens, where it lands, what to do by hand, the warning |
+| [docs/known-limitations.md](docs/known-limitations.md) | what does not migrate, what to do instead, and what is planned |
 | [docs/examples](docs/examples/README.md) | three worked examples, verified on a cluster |
 | [docs/volume-migration.md](docs/volume-migration.md) | why a Build with volumes fails with `UndefinedVolume`, and the strategy-copy fix |
 | [docs/architecture.md](docs/architecture.md) | for maintainers and agents: how the plugin runs, the conversion steps, the rules that must stay true |
