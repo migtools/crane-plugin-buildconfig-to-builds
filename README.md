@@ -137,12 +137,15 @@ name resolves to the OpenShift Build API.
 Nothing builds on its own. OpenShift triggers do not exist in Shipwright, so create a
 `BuildRun` to start the first build.
 
-Which ServiceAccount it runs as depends on whether the plugin generated one. If it did not,
-leave the BuildRun's `serviceAccount` unset and it runs as the namespace `pipeline` account.
-If it did, that account carries the BuildConfig's pull secret and the plugin names it in the
-Build's `buildconfig-to-shipwright/buildrun-template` annotation, so point the BuildRun at
-it. Leaving it unset there drops the pull secret and a private builder image will not pull.
-On OpenShift, grant the generated account the SCC buildah needs, scoped to that one account:
+Which ServiceAccount it runs as is in the Build's `buildconfig-to-shipwright/buildrun-template`
+annotation whenever there is one to name: the account the BuildConfig named, or the one the
+plugin generated to carry the pull secret. Point the BuildRun at it. With neither, leave
+`serviceAccount` unset and the BuildRun runs as the namespace `pipeline` account. A named
+account comes across with the rest of the export, except `builder`, `deployer` and `default`,
+which the migration does not carry over. The warning on the Build says which case applies
+and what to check on the target. A generated account carries only the pull secret; leaving
+the BuildRun's `serviceAccount` unset drops it and a private builder image will not pull. On OpenShift,
+grant the generated account the SCC buildah needs, scoped to that one account:
 
 ```bash
 oc adm policy add-scc-to-user pipelines-scc -z <generated-sa> -n <namespace>

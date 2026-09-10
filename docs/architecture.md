@@ -80,7 +80,7 @@ and five more on an error. The rest only add to the Build or warn.
 | 2 | Strategy | inline switch, then `processDockerStrategy` or `processSourceStrategy` | `spec.strategy` | strategy name (`buildah` or `source-to-image`, or the override from `default-build-strategy`), the strategy params, `spec.env`, `spec.volumes` | Custom and JenkinsPipeline: skipped. Unknown type: failed. A `from` image that cannot be resolved: failed |
 | 3 | Output-image gate | inline in `Convert` | `spec.output.to` | nothing | Missing or empty: skipped. Shipwright requires an output image |
 | 4 | Pull secret | inline, `getPullSecret`, `generateServiceAccount` | the strategy's `pullSecret`, `spec.serviceAccount` | a new ServiceAccount carrying the secret, only when the BuildConfig names no service account | serialization error: failed |
-| 5 | Named service account | inline in `Convert` | `spec.serviceAccount` | nothing; warns that its secrets and RBAC must be recreated by hand | no |
+| 5 | Named service account | inline in `Convert` | `spec.serviceAccount` | nothing on the Build; step 17 writes the name into the BuildRun template. Warns W9 that crane carries the account, its RoleBindings and the cluster RBAC that names it, and what to check, or W67 when the name is `builder`, `deployer` or `default`, which the migration does not carry over: crane-lib drops `default`, and crane-plugin-openshift drops the other two when it is installed | no |
 | 6 | Inline Dockerfile | `processInlineDockerfile` in `dockerfile.go` | `spec.source.dockerfile` | Docker strategy: a ConfigMap holding the Dockerfile, plus a pointer annotation on the Build. Source strategy: dropped with a warning | serialization error: failed |
 | 7 | Source | `processSource`, `processGitProxyConfig` | `spec.source` | `spec.source` as Git, Local (single-file binary) or OCIArtifact (one image); `contextDir`; proxy env vars | more than one source type, an archive binary, more than one image, or a bad image reference: failed |
 | 8 | Output | `processOutput`, `processOutputImageLabels` | `spec.output` and the two mapping flags | `spec.output.image`, `pushSecret`, `labels` | no |
@@ -92,7 +92,7 @@ and five more on an error. The rest only add to the Build or warn.
 | 14 | Registries | `addRegistries` | the three registry flags | strategy params for search, insecure and block lists. When the strategy name is exactly `source-to-image`, and only when the output image's registry is in the insecure list, the list sets `spec.output.insecure` instead, because Shipwright does the push there. An S2I override from `default-build-strategy` gets the `registries-insecure` param like buildah does, since the plugin cannot know how it pushes | no |
 | 15 | Triggers | `processTriggers` in `triggers.go` | `spec.triggers` | the original triggers as an annotation, secrets removed; one warning per trigger and one summary | no |
 | 16 | Chain notices | `processChainCandidates` in `chain.go` | the strategy `from`, `source.images[].from`, and the ImageChange triggers | nothing; one info line per `ImageStreamTag` input in the BuildConfig's own namespace that no warning already names, saying to run its producer first if there is one | no |
-| 17 | Resources | `processResources` | `spec.resources` | a BuildRun template with the requests and limits, stored as an annotation. Never a live BuildRun. Under a `default-build-strategy` override the template has no `stepResources`, and a warning asks the user to add them | template cannot be marshalled: failed |
+| 17 | Resources | `processResources` | `spec.resources`, and the account from steps 4 and 5 | a BuildRun template stored as an annotation, written when `spec.resources` has requests or limits or there is an account to name. Never a live BuildRun. Under a `default-build-strategy` override the template has no `stepResources`, and a warning asks the user to add them | template cannot be marshalled: failed |
 | 18 | Outcome | inline in `Convert` | the warnings recorded since step 1 | the `conversion-outcome` annotation, and the `conversion-warnings` annotation when any warning fired | no |
 | 19 | Serialize | `toUnstructured`, `stripSerializationNoise` | the Build; the ServiceAccount and ConfigMap were serialized in steps 4 and 6 | the resources crane will write | conversion error: failed |
 
@@ -138,7 +138,7 @@ does not matter. Five pairs do depend on order:
 | Later step | Needs from an earlier step |
 |---|---|
 | 14 Registries | the strategy name from step 2, to decide between a param and `output.insecure`; the output image from step 8 |
-| 17 Resources | the strategy name from step 2, to fill in step names; the generated ServiceAccount name from step 4 |
+| 17 Resources | the strategy name from step 2, to fill in step names; the generated ServiceAccount name from step 4, or the named account from step 5 |
 | 18 Outcome | every warning, so it must run after every other step |
 | 19 Serialize | the annotations written in step 18 |
 | 3 Output gate | must run before steps 4 to 19, which all assume an output image exists |
@@ -186,7 +186,7 @@ produce a Build that Kubernetes rejects.
 | Shipwright `Build` | always, for a converted BuildConfig | the BuildConfig's name, sanitized to a valid DNS label |
 | `ServiceAccount` | the strategy has a pull secret and the BuildConfig names no service account | the BuildConfig's name, sanitized |
 | `ConfigMap` | an inline Dockerfile on a Docker strategy | the BuildConfig's name plus `-dockerfile`, sanitized |
-| BuildRun template | `spec.resources` has requests or limits | not a resource: YAML text in the `buildconfig-to-shipwright/buildrun-template` annotation |
+| BuildRun template | `spec.resources` has requests or limits, or the BuildConfig names a ServiceAccount, or step 4 generated one | not a resource: YAML text in the `buildconfig-to-shipwright/buildrun-template` annotation |
 
 Names go through `uniqueName` in `converter.go`, which calls `sanitizeDNS1123Label` in
 `names.go`. Sanitizing lowercases, replaces invalid characters, and trims to 63 characters.
@@ -206,7 +206,7 @@ The annotations the plugin writes, and where:
 | `crane.konveyor.io/conversion-warnings` | Build | at least one warning fired |
 | `buildconfig-to-shipwright/conversion-outcome` | Build, or the passed-through BuildConfig | always |
 | `buildconfig-to-shipwright/conversion-reason` | passed-through BuildConfig | skipped or failed |
-| `buildconfig-to-shipwright/buildrun-template` | Build | `spec.resources` is set |
+| `buildconfig-to-shipwright/buildrun-template` | Build | `spec.resources` is set, or the Build names a ServiceAccount (generated or from `spec.serviceAccount`) |
 | `buildconfig-to-shipwright/original-triggers` | Build | `spec.triggers` is not empty |
 | `buildconfig-to-shipwright/inline-dockerfile-configmap` | Build | inline Dockerfile on a Docker strategy |
 
@@ -261,7 +261,7 @@ reasoning.
 | 6 | Out-of-range or invalid values are warned about and dropped whole. Never clamped, never partly applied | clamping rewrites user intent silently | `converter_test.go` (retention), `nodeselector_test.go` |
 | 7 | Never emit a ServiceAccount with the same name as one the BuildConfig names | crane migrates that account separately; a same-named emit overwrites its pull secrets | `converter_test.go` (`TestNamedServiceAccountWithPullSecretIsNotGenerated`). ADR-0006 |
 | 8 | Never guess a push-secret name. Warn instead | a guessed name gives a Build that Shipwright marks as missing its secret | `converter_output_credentials_test.go`. ADR-0006 |
-| 9 | The BuildRun template is inert text in an annotation, written only when `spec.resources` has requests or limits. Under a strategy override it carries no `stepResources`, and a warning says so | a live BuildRun in the migration stream would start a build on apply | `converter_test.go` (`TestConvertResourcesDockerStrategy`, `TestConvertResourcesCustomStrategyOmitsStepResources`). ADR-0005 |
+| 9 | The BuildRun template is inert text in an annotation, written when `spec.resources` has requests or limits or there is an account to name (generated in step 4 or named by the BuildConfig), and never otherwise. Under a strategy override it carries no `stepResources`, and a warning says so | a live BuildRun in the migration stream would start a build on apply; a Build with nothing the template could hold gets no template | `converter_test.go` (`TestConvertResourcesDockerStrategy`, `TestConvertResourcesCustomStrategyOmitsStepResources`, `TestServiceAccountTemplateWrittenWithoutResources`, `TestGeneratedServiceAccountTemplateWrittenWithoutResources`, `TestConvertResourcesEmptyNoAnnotation`). ADR-0005, ADR-0010 |
 | 10 | Converted volumes keep their exact BuildConfig names | Shipwright matches volumes by name; a rename hides the cluster's error | `volumes_test.go`. ADR-0007 |
 | 11 | The warnings annotation stays under 32 KiB and says when it was cut | Kubernetes rejects an object whose annotations exceed 256 KiB; warning text contains user-controlled names | `attribution_test.go` (`TestWarningsAnnotationStaysBounded`). ADR-0003 |
 | 12 | Generated names are valid DNS labels and stable across runs. Output YAML is byte-stable for the same input | converting twice must give the same result | `names_test.go` (`TestGeneratedNamesAreDNS1123Compliant`, `TestCollidingTruncatedNamesGetDistinctNames`), `serialization_test.go` (`TestToUnstructuredOmitsSerializationNoise`) |
@@ -269,6 +269,7 @@ reasoning.
 | 14 | Never generate a volume for a source secret or ConfigMap | the Dockerfile also needs an edit the plugin cannot make; half the job produces builds that fail silently | `converter_test.go` (source secrets and ConfigMaps tests) |
 | 15 | A convertible BuildConfig always produces a Build. Degraded and warned, never blocked | the migration's job is to get resources onto the target and report gaps | `outcome_test.go` (`TestConvertOutcomeConvertedWithWarnings`) |
 | 16 | Chained builds are noticed per BuildConfig: a same-namespace `ImageStreamTag` input gets the run-order sentence on every warning that names it, or, when no warning does, one info line that leaves the outcome `converted`. Never a cross-resource pass, never a Build trigger | crane runs the plugin once per resource, and a notice that reports no loss must not mark a clean conversion lossy | `chain_test.go` (`TestChainInfoForInputNoWarningNames`, `TestChainNoticeControls`). ADR-0009 |
+| 17 | The plugin emits nothing crane already migrates for a named ServiceAccount: not the account, not its Secrets, not its RBAC. It writes the name into the BuildRun template and warns about what to check | crane export, crane-lib and crane-plugin-openshift carry the account and its bindings; a second copy from the plugin would overwrite theirs (rule 7) | `converter_test.go` (`TestServiceAccountAssociationWarned`, `TestServiceAccountBuilderAndDeployerWarnedSeparately`, `TestNamedServiceAccountWithPullSecretIsNotGenerated`). ADR-0011 |
 
 ## Where to add things
 
