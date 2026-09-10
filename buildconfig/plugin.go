@@ -28,7 +28,7 @@ type BuildConfigTransformPlugin struct {
 
 func (p *BuildConfigTransformPlugin) Metadata() transform.PluginMetadata {
 	return transform.PluginMetadata{
-		Name:    "BuildConfigPlugin",
+		Name:    "BuildConfigToBuildsPlugin",
 		Version: PluginVersion,
 		OptionalFields: []transform.OptionalFields{
 			{

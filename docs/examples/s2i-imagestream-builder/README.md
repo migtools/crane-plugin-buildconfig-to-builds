@@ -26,7 +26,7 @@ no registry mapping, so the output image keeps the internal-registry form.
 ```bash
 crane export -n my-app
 
-crane transform BuildConfigPlugin \
+crane transform BuildConfigToBuildsPlugin \
   --plugin-dir ./plugins \
   --optional-flags "$(cat optional-flags.json)"
 

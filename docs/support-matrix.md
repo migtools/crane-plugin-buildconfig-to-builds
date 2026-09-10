@@ -303,7 +303,7 @@ These are not top-level flags. Pass them as `name=value` pairs, comma separated,
 `--optional-flags`. The warnings quote them with a leading `--`; the names are the same.
 
 ```bash
-crane transform BuildConfigPlugin \
+crane transform BuildConfigToBuildsPlugin \
   --plugin-dir ./plugins \
   --optional-flags "registry-mapping=image-registry.openshift-image-registry.svc:5000=quay.io/myorg,imagestream-mapping=myns/mybuilder:latest=quay.io/myorg/builder:latest"
 ```

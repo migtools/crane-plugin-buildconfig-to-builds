@@ -1,4 +1,4 @@
-# crane-plugin-buildconfig-to-shipwright
+# BuildConfigToBuildsPlugin for crane
 
 A [crane](https://github.com/migtools/crane) transform plugin that converts OpenShift
 `BuildConfig` resources (`build.openshift.io/v1`) into Shipwright `Build` resources
@@ -78,7 +78,7 @@ crane export -n myapp
 ### 2. Transform
 
 ```bash
-crane transform BuildConfigPlugin \
+crane transform BuildConfigToBuildsPlugin \
   --plugin-dir ./plugins \
   --optional-flags '{"registry-mapping":"image-registry.openshift-image-registry.svc:5000=quay.io/myorg"}'
 ```

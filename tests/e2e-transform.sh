@@ -86,7 +86,7 @@ echo "  Built: $PLUGIN_DIR/crane-plugin-buildconfig-to-shipwright"
 # --- Verify plugin metadata ---
 log "Testing plugin metadata"
 METADATA=$(echo '{}' | "$PLUGIN_DIR/crane-plugin-buildconfig-to-shipwright")
-check 'echo "$METADATA" | grep -q "BuildConfigPlugin"' "metadata returns plugin name"
+check 'echo "$METADATA" | grep -q "BuildConfigToBuildsPlugin"' "metadata returns plugin name"
 check 'echo "$METADATA" | grep -q "registry-mapping"' "metadata lists registry-mapping flag"
 check 'echo "$METADATA" | grep -q "imagestream-mapping"' "metadata lists imagestream-mapping flag"
 
@@ -109,9 +109,9 @@ crane transform \
 log "Step 3: Verifying transform output"
 
 # Find the stage directory (name includes plugin name)
-STAGE_DIR=$(find "$TRANSFORM_DIR" -maxdepth 1 -type d -name '*BuildConfigPlugin*' | head -1)
+STAGE_DIR=$(find "$TRANSFORM_DIR" -maxdepth 1 -type d -name '*BuildConfigToBuildsPlugin*' | head -1)
 if [ -z "$STAGE_DIR" ]; then
-    fail "no BuildConfigPlugin stage directory found in $TRANSFORM_DIR"
+    fail "no BuildConfigToBuildsPlugin stage directory found in $TRANSFORM_DIR"
     echo "  Contents of $TRANSFORM_DIR:"
     ls -R "$TRANSFORM_DIR" 2>/dev/null | sed 's/^/    /'
 else

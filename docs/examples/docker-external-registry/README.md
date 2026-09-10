@@ -23,7 +23,7 @@ internal registry prefix to `quay.io/myorg`.
 ```bash
 crane export -n buildconfig-test
 
-crane transform BuildConfigPlugin \
+crane transform BuildConfigToBuildsPlugin \
   --plugin-dir ./plugins \
   --optional-flags "$(cat optional-flags.json)"
 
