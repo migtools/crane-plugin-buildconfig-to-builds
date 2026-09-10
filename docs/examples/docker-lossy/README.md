@@ -22,7 +22,7 @@ This is the example to read before a real migration.
 ```bash
 crane export -n shop
 
-crane transform BuildConfigPlugin \
+crane transform BuildConfigToBuildsPlugin \
   --plugin-dir ./plugins \
   --optional-flags "$(cat optional-flags.json)"
 
