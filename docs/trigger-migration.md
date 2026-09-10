@@ -298,8 +298,12 @@ What each trigger checks, and what is different from OpenShift:
   Generic listener itself: the Generic trigger fires on any POST, so one Cloud push there
   starts two builds.
 - **Generic** checks nothing. OpenShift hid the Generic URL behind the secret in its path; a
-  listener has one path and no secret. Restrict who can reach the Route, or move the caller
-  to one of the provider triggers.
+  listener has one path and no secret. If the caller runs in the cluster, delete the
+  `buildconfig-generic` Route from `webhooks.yaml` and POST to the Service instead,
+  `http://el-buildconfig-generic.NAMESPACE.svc:8080` (the Service port is named
+  `http-listener`, port 8080). If the URL has to be public, put the caller's CIDRs, space
+  separated, in the `haproxy.router.openshift.io/ip_whitelist` annotation on the
+  `buildconfig-generic` Route. Or move the caller to one of the provider triggers.
 - `allowEnv` has no equivalent. A webhook cannot set environment variables on the BuildRun
   ([W51](support-matrix.md#w51)).
 - OpenShift built only when the pushed branch matched the BuildConfig's. The recipe builds
@@ -477,6 +481,8 @@ metadata:
 spec:
   pipelineRef:
     name: rebuild-chain
+  timeouts:
+    pipeline: "2h"
   taskRunTemplate:
     serviceAccountName: buildrun-pipeline
   params:
@@ -488,6 +494,10 @@ spec:
       value: SERVICEACCOUNT
 EOF
 ```
+
+This PipelineRun times out after two hours by default here; omit `timeouts` and Tekton's
+cluster default applies instead, which can be 60 minutes or disabled, and a timed-out
+PipelineRun stops polling but does not cancel the BuildRun it already created.
 
 The consumer's BuildRun is created only after the producer's reaches `Succeeded=True`; a
 failed producer fails the PipelineRun and the consumer never starts. A chain longer than two

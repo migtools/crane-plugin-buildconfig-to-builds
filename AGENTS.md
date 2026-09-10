@@ -140,8 +140,8 @@ not reword a warning without saying which matrix row moves.
 
 These tests guard the docs. A red one means a doc to update, not a test to weaken.
 
-Every test in the table exists on `main`. Six of them landed with the documentation PRs
-(#64, #65, #66 to #68, #70).
+Every test in the table exists on `main`, or arrives with the PR that adds its row. Six
+landed with the documentation PRs (#64, #65, #66 to #68, #70).
 
 | Test | Guards | Fix |
 |---|---|---|
