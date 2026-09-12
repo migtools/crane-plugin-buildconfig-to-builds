@@ -5,8 +5,8 @@ metadata:
     buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
     buildconfig-to-shipwright/original-triggers: '[{"type":"ConfigChange"},{"type":"ImageChange","imageChange":{}}]'
     crane.konveyor.io/conversion-warnings: |-
-      [my-app/sample-nodejs] ImageStream reference "nodejs:18-ubi8" in namespace "openshift" could not be resolved — no --imagestream-mapping provided. Using fallback: image-registry.openshift-image-registry.svc:5000/openshift/nodejs:18-ubi8. Provide --imagestream-mapping to set the correct image reference.
-      [my-app/sample-nodejs] Output ImageStreamTag "sample-nodejs:latest" resolved to fallback URL: image-registry.openshift-image-registry.svc:5000/my-app/sample-nodejs:latest
+      [my-app/sample-nodejs] Output ImageStreamTag "sample-nodejs:latest" resolved to fallback URL: quay.io/example/my-app/sample-nodejs:latest
+      [my-app/sample-nodejs] Output image for ImageStreamTag "my-app/sample-nodejs:latest" was redirected off the internal registry to "quay.io/example/my-app/sample-nodejs:latest"; the ImageStream will no longer be updated, so any Deployment or DeploymentConfig watching it to roll out will stop firing.
       [my-app/sample-nodejs] No explicit pushSecret found for ImageStreamTag output. Ensure the BuildRun uses a ServiceAccount with internal registry push access.
       [my-app/sample-nodejs] BuildConfig sample-nodejs uses runPolicy "Serial", which is dropped: OpenShift queued its builds and ran them one at a time, but Shipwright BuildRuns run concurrently. Serialize the runs in your CI/CD pipeline if build ordering matters, for example when several BuildRuns push the same image tag
       [my-app/sample-nodejs] BuildConfig sample-nodejs: ConfigChange trigger is dropped — the automatic first build will not happen; create a BuildRun manually once to start the first build.
@@ -22,12 +22,12 @@ spec:
   - name: NPM_MIRROR
     value: https://registry.npmjs.org
   output:
-    image: image-registry.openshift-image-registry.svc:5000/my-app/sample-nodejs:latest
+    image: quay.io/example/my-app/sample-nodejs:latest
   paramValues:
   - configMapValue: null
     name: builder-image
     secretValue: null
-    value: image-registry.openshift-image-registry.svc:5000/openshift/nodejs:18-ubi8
+    value: registry.access.redhat.com/ubi9/nodejs-18:latest
   source:
     contextDir: source-build
     git:

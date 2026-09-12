@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -18,31 +19,51 @@ import (
 )
 
 func main() {
-	inputDir := "../../tests/testdata/buildconfig_yamls"
-	outputDir := "../../tests/testdata/expected_output"
+	testdataDir := "../../tests/testdata"
 
-	// Get all YAML files
-	files, err := filepath.Glob(filepath.Join(inputDir, "*.yaml"))
+	// Get all test directories (exclude old buildconfig_yamls and expected_output)
+	entries, err := os.ReadDir(testdataDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing files: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error reading testdata directory: %v\n", err)
 		os.Exit(1)
 	}
-	sort.Strings(files)
+
+	var testDirs []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Skip old directories and special directories
+		name := entry.Name()
+		if name == "buildconfig_yamls" || name == "expected_output" ||
+		   strings.HasPrefix(name, "e2e-") || strings.HasPrefix(name, ".") {
+			continue
+		}
+		testDirs = append(testDirs, name)
+	}
+	sort.Strings(testDirs)
 
 	logger, _ := test.NewNullLogger()
 	plugin := &buildconfig.BuildConfigTransformPlugin{Log: logger}
 
-	for _, file := range files {
-		basename := filepath.Base(file)
-		name := strings.TrimSuffix(basename, ".yaml")
-		outputFile := filepath.Join(outputDir, name+"-expected.yaml")
+	for _, testDir := range testDirs {
+		testDirPath := filepath.Join(testdataDir, testDir)
+		buildConfigPath := filepath.Join(testDirPath, "buildconfig.yaml")
+		flagsPath := filepath.Join(testDirPath, "flags.json")
+		outputFile := filepath.Join(testDirPath, "expected_output.yaml")
 
-		fmt.Printf("Processing: %s\n", basename)
+		fmt.Printf("Processing: %s\n", testDir)
+
+		// Check if buildconfig.yaml exists
+		if _, err := os.Stat(buildConfigPath); os.IsNotExist(err) {
+			fmt.Printf("  SKIP: No buildconfig.yaml found\n")
+			continue
+		}
 
 		// Read BuildConfig YAML
-		data, err := os.ReadFile(file)
+		data, err := os.ReadFile(buildConfigPath)
 		if err != nil {
-			fmt.Printf("  SKIP: Failed to read file: %v\n", err)
+			fmt.Printf("  SKIP: Failed to read buildconfig.yaml: %v\n", err)
 			continue
 		}
 
@@ -77,8 +98,14 @@ func main() {
 			continue
 		}
 
-		// Run plugin
-		request := transform.PluginRequest{Unstructured: *buildConfigFound}
+		// Load optional flags (imagestream-mapping, registry-mapping)
+		flags := loadOptionalFlags(flagsPath)
+
+		// Run plugin with flags
+		request := transform.PluginRequest{
+			Unstructured: *buildConfigFound,
+			Extras:       flags,
+		}
 		response, err := plugin.Run(request)
 		if err != nil {
 			fmt.Printf("  SKIP: Plugin error: %v\n", err)
@@ -107,8 +134,33 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("  ✓ Generated: %s-expected.yaml\n", name)
+		fmt.Printf("  ✓ Generated: expected_output.yaml\n")
 	}
 
 	fmt.Println("\nDone! Generated expected outputs")
+}
+
+// loadOptionalFlags loads optional plugin flags from a JSON file.
+// Returns nil if the flags file doesn't exist (not an error).
+func loadOptionalFlags(flagsPath string) map[string]string {
+	// Check if flags file exists
+	if _, err := os.Stat(flagsPath); os.IsNotExist(err) {
+		return nil // No flags file, return nil (not an error)
+	}
+
+	// Read flags file
+	data, err := os.ReadFile(flagsPath)
+	if err != nil {
+		fmt.Printf("  WARNING: Failed to read flags file: %v\n", err)
+		return nil
+	}
+
+	// Parse JSON
+	var flags map[string]string
+	if err := json.Unmarshal(data, &flags); err != nil {
+		fmt.Printf("  WARNING: Failed to parse flags file: %v\n", err)
+		return nil
+	}
+
+	return flags
 }

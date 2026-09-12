@@ -1,0 +1,4 @@
+{
+  "imagestream-mapping": "openshift/nodejs:18-ubi8=registry.access.redhat.com/ubi9/nodejs-18:latest",
+  "registry-mapping": "image-registry.openshift-image-registry.svc:5000=quay.io/example"
+}

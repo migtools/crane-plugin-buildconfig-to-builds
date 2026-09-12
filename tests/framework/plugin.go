@@ -1,6 +1,7 @@
 package framework
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +15,8 @@ import (
 )
 
 // RunPluginOnYAML executes the plugin on a YAML file and returns generated Build resources.
-func RunPluginOnYAML(yamlPath string) ([]*unstructured.Unstructured, error) {
+// The extras parameter contains optional flags like imagestream-mapping and registry-mapping.
+func RunPluginOnYAML(yamlPath string, extras map[string]string) ([]*unstructured.Unstructured, error) {
 	// Read and parse YAML file
 	resources, err := ParseYAML(yamlPath)
 	if err != nil {
@@ -35,9 +37,10 @@ func RunPluginOnYAML(yamlPath string) ([]*unstructured.Unstructured, error) {
 			continue
 		}
 
-		// Create plugin request
+		// Create plugin request with optional flags
 		request := transform.PluginRequest{
 			Unstructured: *res,
+			Extras:       extras,
 		}
 
 		// Run plugin
@@ -91,4 +94,27 @@ func ParseYAML(yamlPath string) ([]*unstructured.Unstructured, error) {
 // UnstructuredToYAML converts an unstructured resource to YAML bytes.
 func UnstructuredToYAML(obj *unstructured.Unstructured) ([]byte, error) {
 	return yaml.Marshal(obj.Object)
+}
+
+// LoadOptionalFlags loads optional plugin flags from a JSON file.
+// Returns nil if the flags file doesn't exist (not an error).
+func LoadOptionalFlags(flagsPath string) (map[string]string, error) {
+	// Check if flags file exists
+	if _, err := os.Stat(flagsPath); os.IsNotExist(err) {
+		return nil, nil // No flags file, return empty map (not an error)
+	}
+
+	// Read flags file
+	data, err := os.ReadFile(flagsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read flags file %s: %w", flagsPath, err)
+	}
+
+	// Parse JSON
+	var flags map[string]string
+	if err := json.Unmarshal(data, &flags); err != nil {
+		return nil, fmt.Errorf("failed to parse flags file %s: %w", flagsPath, err)
+	}
+
+	return flags, nil
 }
