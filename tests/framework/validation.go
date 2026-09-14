@@ -26,7 +26,7 @@ func NormalizeYAML(yamlStr string) (string, error) {
 }
 
 // CompareBuildsWithGoldenFile compares generated resources against kind-specific golden files.
-// Pattern: Build.yaml, ServiceAccount.yaml, ConfigMap.yaml
+// Pattern: expected_Build.yaml, expected_ServiceAccount.yaml, expected_ConfigMap.yaml
 // Missing file = expects that kind NOT generated
 func CompareBuildsWithGoldenFile(resources []*unstructured.Unstructured, testDirPath string) ([]string, error) {
 	var diffs []string
@@ -41,14 +41,14 @@ func CompareBuildsWithGoldenFile(resources []*unstructured.Unstructured, testDir
 	// Check each kind's golden file
 	expectedKinds := []string{"Build", "ServiceAccount", "ConfigMap"}
 	for _, kind := range expectedKinds {
-		goldenPath := fmt.Sprintf("%s/%s.yaml", testDirPath, kind)
+		goldenPath := fmt.Sprintf("%s/expected_%s.yaml", testDirPath, kind)
 		actualResources := resourcesByKind[kind]
 
 		// Check if golden file exists
 		if _, err := os.Stat(goldenPath); os.IsNotExist(err) {
 			// No golden file for this kind
 			if len(actualResources) > 0 {
-				diffs = append(diffs, fmt.Sprintf("Unexpected %s generated (no %s.yaml expected)", kind, kind))
+				diffs = append(diffs, fmt.Sprintf("Unexpected %s generated (no expected_%s.yaml expected)", kind, kind))
 			}
 			continue
 		}
@@ -70,7 +70,7 @@ func CompareBuildsWithGoldenFile(resources []*unstructured.Unstructured, testDir
 
 		// Expected content - validate resources
 		if len(actualResources) == 0 {
-			diffs = append(diffs, fmt.Sprintf("Expected %s (from %s.yaml), but none generated", kind, kind))
+			diffs = append(diffs, fmt.Sprintf("Expected %s (from expected_%s.yaml), but none generated", kind, kind))
 			continue
 		}
 
@@ -90,7 +90,7 @@ func CompareBuildsWithGoldenFile(resources []*unstructured.Unstructured, testDir
 		// Normalize and compare
 		normExpected, err := NormalizeYAML(expectedStr)
 		if err != nil {
-			return nil, fmt.Errorf("failed to normalize %s.yaml: %w", kind, err)
+			return nil, fmt.Errorf("failed to normalize expected_%s.yaml: %w", kind, err)
 		}
 
 		normActual, err := NormalizeYAML(actualYAML.String())
@@ -99,7 +99,7 @@ func CompareBuildsWithGoldenFile(resources []*unstructured.Unstructured, testDir
 		}
 
 		if normExpected != normActual {
-			diffs = append(diffs, fmt.Sprintf("%s mismatch (see %s.yaml)", kind, kind))
+			diffs = append(diffs, fmt.Sprintf("%s mismatch (see expected_%s.yaml)", kind, kind))
 			// Add detailed line diff
 			expectedLines := strings.Split(normExpected, "\n")
 			actualLines := strings.Split(normActual, "\n")
