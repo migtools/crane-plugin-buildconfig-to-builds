@@ -46,7 +46,7 @@ CASE_GLOB="e2e-*"
 WORK_DIR=$(mktemp -d)
 PLUGIN_DIR="$WORK_DIR/plugins"
 mkdir -p "$PLUGIN_DIR"
-PLUGIN_BIN="$PLUGIN_DIR/crane-plugin-buildconfig-to-shipwright"
+PLUGIN_BIN="$PLUGIN_DIR/crane-plugin-buildconfig-to-builds"
 
 # Internal OpenShift registry the fallback output URL uses; testcase.env rewrites it.
 export OCP_REGISTRY="image-registry.openshift-image-registry.svc:5000"
@@ -202,7 +202,7 @@ run_case() {
     fi
 
     # --- Step 2: crane transform + apply ---
-    crane transform BuildConfigPlugin \
+    crane transform BuildConfigToBuildsPlugin \
         --export-dir "$export_dir" \
         --transform-dir "$transform_dir" \
         --plugin-dir "$PLUGIN_DIR" \

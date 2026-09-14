@@ -11,7 +11,14 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-const PluginVersion = "v0.1.0"
+// PluginVersion is what the plugin reports to crane in its metadata. The
+// release workflow overwrites it with the released version at link time:
+//
+//	go build -ldflags "-X github.com/migtools/crane-plugin-buildconfig-to-builds/buildconfig.PluginVersion=v0.1.0"
+//
+// A binary built any other way keeps the value below, so a development build
+// is never mistaken for a release.
+var PluginVersion = "devel"
 
 const (
 	RegistryMappingFlag      = "registry-mapping"
@@ -28,7 +35,7 @@ type BuildConfigTransformPlugin struct {
 
 func (p *BuildConfigTransformPlugin) Metadata() transform.PluginMetadata {
 	return transform.PluginMetadata{
-		Name:    "BuildConfigPlugin",
+		Name:    "BuildConfigToBuildsPlugin",
 		Version: PluginVersion,
 		OptionalFields: []transform.OptionalFields{
 			{
@@ -43,8 +50,8 @@ func (p *BuildConfigTransformPlugin) Metadata() transform.PluginMetadata {
 			},
 			{
 				FlagName: DefaultBuildStrategyFlag,
-				Help:     "Override default ClusterBuildStrategy names, format: docker=my-buildah,s2i=my-s2i",
-				Example:  "docker=my-buildah,s2i=my-s2i",
+				Help:     "Name a copy of a strategy-catalog ClusterBuildStrategy, format: docker=buildah-with-volumes,s2i=source-to-image-with-volumes",
+				Example:  "docker=buildah-with-volumes,s2i=source-to-image-with-volumes",
 			},
 			{
 				FlagName: SearchRegistriesFlag,

@@ -36,8 +36,13 @@ The original `crane convert` resolved ImageStreamTag/ImageStreamImage references
 ## Building
 
 ```
-GOTOOLCHAIN=auto go build -o crane-plugin-buildconfig-to-shipwright .
+GOTOOLCHAIN=auto go build -o crane-plugin-buildconfig-to-builds .
 ```
+
+A binary built that way reports its version to crane as `devel`. The release workflow is
+what stamps a real one, with
+`-ldflags "-X github.com/migtools/crane-plugin-buildconfig-to-builds/buildconfig.PluginVersion=<tag>"`,
+so `crane plugin-manager list --installed` saying `devel` means a local build, not a bug.
 
 Requires Go 1.25.6+ (forced by transitive dependencies, notably `shipwright-io/build v0.19.0`). Newer Shipwright releases (v0.20+) pull in k8s v0.36 and require Go 1.26; this module stays on Shipwright v0.19.0 / k8s v0.34 to remain buildable with the Go 1.25 toolchain. The pinned crane-lib pseudo-version (`v0.1.6-0.20260807130033-222a325c7cee`) provides the unreleased `NewResources` API — update this when crane-lib publishes a new release.
 
@@ -78,6 +83,40 @@ Full end-to-end validation on real Minikube clusters. See [`hack/README.md`](hac
 **CI/CD:**
 
 Pull requests run automated E2E tests on Minikube via [`.github/workflows/test-e2e-minikube-pr.yml`](.github/workflows/test-e2e-minikube-pr.yml).
+
+## Releasing
+
+Two workflows, run by hand from the Actions tab, in this order.
+
+**Create release branch**
+([`.github/workflows/release-branch.yml`](.github/workflows/release-branch.yml)) takes a
+major and minor version, `0.1`, and opens `release-0.1` off main. crane's naming, so no
+leading `v`. Patch releases reuse the branch: `v0.1.0`, `v0.1.1` and the rest all come off
+`release-0.1`.
+
+**Release** ([`.github/workflows/release.yml`](.github/workflows/release.yml)) runs on that
+branch and takes the full version, `v0.1.0`. It refuses to run
+anywhere but a `release-*` branch, and refuses a version whose series does not match the
+branch, so `v0.1.3` cannot be tagged on `release-0.2`. It builds the five platforms crane
+itself publishes, stamps the version, checks each binary carries it, writes checksums, and
+opens a **draft** release. Major versions are refused: this ships `0.x` until someone
+decides otherwise and edits the check.
+
+A draft creates no tag and serves no assets. Publishing it is what does both, and nothing
+downstream works until you do:
+
+- The entry in [migtools/crane-plugins](https://github.com/migtools/crane-plugins) is what
+  makes `crane plugin-manager add` work. Nothing here writes it: open that PR by hand, with a
+  manifest naming this release's assets, after the release is published.
+  **Do not merge it before the release is published.** `plugin-manager add` does not
+  check the HTTP status of its download, so against an unpublished release it writes
+  GitHub's 404 page into the plugins directory as the plugin binary and reports success.
+- mta-crane pins this plugin in its `go.mod`. That bump needs the tag to exist, so it comes
+  after publishing too.
+
+The release runs unit tests, not the cluster suite. `tests/e2e-cluster.sh` needs a cluster
+and nothing in the release job has one, so what the release proves is what `go test ./...`
+proves. Run the cluster tests on the branch before you cut from it.
 
 ## Before you change behaviour
 
@@ -140,8 +179,8 @@ not reword a warning without saying which matrix row moves.
 
 These tests guard the docs. A red one means a doc to update, not a test to weaken.
 
-Six of the eight land with the sibling documentation PRs (#64, #65, #66 to #68, #70) and do
-not exist on `main` yet. They are listed here so the table is complete when those merge.
+Every test in the table exists on `main`, or arrives with the PR that adds its row. Six
+landed with the documentation PRs (#64, #65, #66 to #68, #70).
 
 | Test | Guards | Fix |
 |---|---|---|
@@ -149,15 +188,19 @@ not exist on `main` yet. They are listed here so the table is complete when thos
 | `TestArchitectureDocNamesEveryFileAndStage` | every non-test Go file and every `process*` method is named in the architecture page | add the line |
 | `TestInvariantsCiteRealTests` | every test the architecture page cites exists | rename it in the page, or restore the test |
 | `TestExamplesMatchCommittedOutput` | each `docs/examples/*/expected/` matches the plugin's output | `go test ./buildconfig -run TestExamplesMatchCommittedOutput -update` (once #66 to #68 land; the flag does not exist before that), then re-read that example's README. A regenerated expectation is a changed assertion, so it is read line by line like any other golden file |
-| `TestReadmeOptionalFlagsAreValidJSON`, `TestReadmeVersionsMatchPins` | README flag examples are JSON; README versions match `go.mod`, the Minikube script, and the CI crane pin | fix the README |
+| `TestReadmeOptionalFlagsAreValidJSON`, `TestReadmeVersionsMatchPins` | README flag examples are JSON; the Shipwright version in the README, the Go version in this file, and the crane commit in `hack/README.md` match `go.mod`, the Minikube script and the CI workflow | fix whichever page the failure names |
+| `TestTriggerRunbookYAMLParses` | every `yaml` block in `docs/trigger-migration.md` is a document `kubectl apply` could read | fix the block; the failure names its line |
 | `TestADRsAreWellFormed` | every record has its parts and is in the index | fix the record |
 | `TestNoDirectWarnLoggingInConverter` | no `c.Log.Warn*` in a Converter method other than `warnf`, which is the single recording path | record the drop through `c.warnf` (ADR-0003) |
 
 ## Gotchas
 
-- The released crane (v0.0.5) silently produces no Builds with this plugin. Build crane from
-  the commit `.github/workflows/test-e2e-minikube-pr.yml` pins, and put it first on `PATH`
-  before running `tests/e2e-transform.sh`.
+- A crane released before `v0.11.0-alpha.1` silently produces no Builds with this plugin:
+  `NewResources` landed in crane commit `24eafd8` on 13 August 2026, and that tag is the
+  first to carry it. For testing a branch, build crane from the commit
+  `.github/workflows/test-e2e-minikube-pr.yml` pins and put it first on `PATH` before running
+  `tests/e2e-transform.sh`. Users install a crane release and add the plugin with
+  `crane plugin-manager add`; the README covers that.
 - Run the Go suite as CI does: `GOWORK=off go test ./... -count=1`. The workspace `go.work`
   outside this repo can resolve different dependency versions.
 - On OpenShift, `kubectl get build/<name>` is the OpenShift Build API. Write

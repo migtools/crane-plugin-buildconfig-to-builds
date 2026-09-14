@@ -9,9 +9,10 @@ This directory contains scripts for setting up development and E2E testing envir
   **Installation:**
   
   ```bash
-  # Build from source
+  # Build from source, at the commit CI pins
   git clone https://github.com/migtools/crane.git
   cd crane
+  git checkout d566a18f6640cd79c8568749d6621b40486d0625
   go build -o crane .
   sudo mv crane /usr/local/bin/
   
@@ -19,8 +20,32 @@ This directory contains scripts for setting up development and E2E testing envir
   crane version
   ```
 
+  Testing a branch means running the branch's own plugin binary against a crane you control,
+  so build both rather than installing a release. The commit is the one
+  `.github/workflows/test-e2e-minikube-pr.yml` pins; keep the two in step.
+
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
 - [minikube](https://minikube.sigs.k8s.io/docs/start/)
+
+## Strategy names on a Minikube cluster
+
+`setup-minikube-shipwright.sh` installs upstream Shipwright's sample strategies. They are not
+the ones the plugin targets: it writes `buildah` and `source-to-image` from
+[strategy-catalog](https://github.com/redhat-openshift-builds/strategy-catalog), which the
+Builds for Red Hat OpenShift operator installs, and upstream has no `buildah` at all. A Build
+converted with the defaults lands here with `BuildRegistrationFailed`.
+
+Pass an override to test on Minikube, which is what the cluster test cases do in their own
+`OPTIONAL_FLAGS`:
+
+```bash
+crane transform --optional-flags '{"default-build-strategy":"docker=buildah-strategy-managed-push"}'
+```
+
+That gets the Build registered. It does not make upstream a supported target: its strategies
+declare fewer parameters, so a BuildConfig using `no-cache`, `squash`, `pull` or
+`runtime-stage-from` still fails on the params. See
+[ADR-0010](../docs/adr/0010-strategy-names-target-the-red-hat-catalog.md).
 
 ## Quick Start
 
@@ -33,7 +58,8 @@ This directory contains scripts for setting up development and E2E testing envir
 # - Kubectl context "minikube-shipwright"
 # - Tekton Pipelines (required by Shipwright)
 # - Shipwright Build v0.19.0
-# - Default ClusterBuildStrategies (buildah, source-to-image, etc.)
+# - Upstream Shipwright's sample ClusterBuildStrategies
+#   (buildah-strategy-managed-push, source-to-image, kaniko, ko, ...)
 # - Local registry addon
 ```
 
@@ -114,8 +140,8 @@ After setting up your environment, test the crane plugin.
 ### 1. Build the Plugin
 
 ```bash
-cd /path/to/crane-plugin-buildconfig-to-shipwright
-go build -o crane-plugin-buildconfig-to-shipwright .
+cd /path/to/crane-plugin-buildconfig-to-builds
+go build -o crane-plugin-buildconfig-to-builds .
 ```
 
 ### 2. Run E2E Transform Test
@@ -147,7 +173,7 @@ The manual steps below are for custom, one-off testing.
 kubectl config use-context minikube-shipwright
 
 # Build plugin
-go build -o /tmp/plugins/crane-plugin-buildconfig-to-shipwright .
+go build -o /tmp/plugins/crane-plugin-buildconfig-to-builds .
 
 # Transform test data
 crane transform \
