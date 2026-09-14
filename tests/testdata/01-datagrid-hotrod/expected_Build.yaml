@@ -1,0 +1,44 @@
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  annotations:
+    buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
+    buildconfig-to-shipwright/original-triggers: '[{"type":"GitHub"},{"type":"Generic"},{"type":"ImageChange","imageChange":{}},{"type":"ConfigChange"}]'
+    crane.konveyor.io/conversion-warnings: |-
+      [/eap-app] Output ImageStreamTag "eap-app:latest" resolved to fallback URL: image-registry.openshift-image-registry.svc:5000//eap-app:latest
+      [/eap-app] No explicit pushSecret found for ImageStreamTag output. Ensure the BuildRun uses a ServiceAccount with internal registry push access.
+      [/eap-app] BuildConfig eap-app uses runPolicy "Serial", which is dropped: OpenShift queued its builds and ran them one at a time, but Shipwright BuildRuns run concurrently. Serialize the runs in your CI/CD pipeline if build ordering matters, for example when several BuildRuns push the same image tag
+      [/eap-app] BuildConfig eap-app: GitHub webhook trigger is dropped — the old OpenShift webhook URL will stop working after migration, and Shipwright provides no replacement URL. Remove or repoint the webhook in your Git provider, then set up Pipelines-as-Code or Tekton Triggers to create BuildRuns on push events.
+      [/eap-app] BuildConfig eap-app: Generic webhook trigger is dropped — the old OpenShift webhook URL will stop working after migration, and Shipwright provides no replacement URL. Remove or repoint the webhook in your Git provider, then set up Pipelines-as-Code or Tekton Triggers to create BuildRuns on push events.
+      [/eap-app] BuildConfig eap-app: ImageChange trigger is dropped — builds will no longer start when the strategy image quay.io/jboss-eap71-openshift:1.3 changes. Shipwright has no equivalent of image change triggers today.
+      [/eap-app] BuildConfig eap-app: ConfigChange trigger is dropped — the automatic first build will not happen; create a BuildRun manually once to start the first build.
+      [/eap-app] Found 4 trigger(s) (ConfigChange, Generic, GitHub, ImageChange) on BuildConfig eap-app — none work in Shipwright today; builds must be started manually or by your own automation.
+    crane.konveyor.io/converted-from: build.openshift.io/v1/BuildConfig/eap-app
+  labels:
+    application: eap-app
+  name: eap-app
+spec:
+  env:
+  - name: MAVEN_MIRROR_URL
+  - name: MAVEN_ARGS_APPEND
+  - name: ARTIFACT_DIR
+  output:
+    image: image-registry.openshift-image-registry.svc:5000//eap-app:latest
+  paramValues:
+  - configMapValue: null
+    name: builder-image
+    secretValue: null
+    value: quay.io/jboss-eap71-openshift:1.3
+  - configMapValue: null
+    name: pull-policy
+    secretValue: null
+    value: always
+  source:
+    contextDir: .
+    git:
+      revision: master
+      url: https://github.com/jboss-openshift/openshift-quickstarts
+    type: Git
+  strategy:
+    kind: ClusterBuildStrategy
+    name: source-to-image

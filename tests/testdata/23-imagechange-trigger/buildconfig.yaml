@@ -1,17 +1,12 @@
 kind: BuildConfig
 apiVersion: build.openshift.io/v1
 metadata:
-  name: sample-build
+  name: sample-verbose-build
   creationTimestamp:
 spec:
   triggers:
-  - type: ImageChange
+  - type: imageChange
     imageChange: {}
-  - type: Generic
-    generic:
-      secret: "mysecret"
-      secretReference:
-        name: "webhooksecret"
   source:
     type: Git
     git:
@@ -33,6 +28,6 @@ spec:
   output:
     to:
       kind: ImageStreamTag
-      name: sample-build:latest
+      name: sample-verbose-build:latest
 status:
   lastVersion: 0

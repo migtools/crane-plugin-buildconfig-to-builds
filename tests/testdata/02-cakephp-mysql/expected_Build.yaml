@@ -1,0 +1,39 @@
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  annotations:
+    buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
+    buildconfig-to-shipwright/original-triggers: '[{"type":"ImageChange","imageChange":{}},{"type":"ConfigChange"},{"type":"GitHub"}]'
+    crane.konveyor.io/conversion-warnings: |-
+      [/cakephp-mysql-persistent] Output ImageStreamTag "cakephp-mysql-persistent:latest" resolved to fallback URL: image-registry.openshift-image-registry.svc:5000//cakephp-mysql-persistent:latest
+      [/cakephp-mysql-persistent] No explicit pushSecret found for ImageStreamTag output. Ensure the BuildRun uses a ServiceAccount with internal registry push access.
+      [/cakephp-mysql-persistent] BuildConfig cakephp-mysql-persistent uses runPolicy "Serial", which is dropped: OpenShift queued its builds and ran them one at a time, but Shipwright BuildRuns run concurrently. Serialize the runs in your CI/CD pipeline if build ordering matters, for example when several BuildRuns push the same image tag
+      [/cakephp-mysql-persistent] PostCommit hook (script) has no Shipwright equivalent and was dropped from BuildConfig 'cakephp-mysql-persistent'. In OpenShift this ran inside the built image before the push, and a failure failed the build. To replicate, add a test step after the BuildRun in a Tekton Pipeline — note this runs after the image is pushed, so it can no longer block a bad image from reaching the registry.
+      [/cakephp-mysql-persistent] BuildConfig cakephp-mysql-persistent: ImageChange trigger is dropped — builds will no longer start when the strategy image quay.io/openshifttest/php_mtc:7.3-ubi8 changes. Shipwright has no equivalent of image change triggers today.
+      [/cakephp-mysql-persistent] BuildConfig cakephp-mysql-persistent: ConfigChange trigger is dropped — the automatic first build will not happen; create a BuildRun manually once to start the first build.
+      [/cakephp-mysql-persistent] BuildConfig cakephp-mysql-persistent: GitHub webhook trigger is dropped — the old OpenShift webhook URL will stop working after migration, and Shipwright provides no replacement URL. Remove or repoint the webhook in your Git provider, then set up Pipelines-as-Code or Tekton Triggers to create BuildRuns on push events.
+      [/cakephp-mysql-persistent] Found 3 trigger(s) (ConfigChange, GitHub, ImageChange) on BuildConfig cakephp-mysql-persistent — none work in Shipwright today; builds must be started manually or by your own automation.
+    crane.konveyor.io/converted-from: build.openshift.io/v1/BuildConfig/cakephp-mysql-persistent
+    description: Defines how to build the application
+    template.alpha.openshift.io/wait-for-ready: "true"
+  labels:
+    app: cakephp-mysql-persistent
+    template: cakephp-mysql-persistent
+  name: cakephp-mysql-persistent
+spec:
+  env:
+  - name: COMPOSER_MIRROR
+  output:
+    image: image-registry.openshift-image-registry.svc:5000//cakephp-mysql-persistent:latest
+  paramValues:
+  - configMapValue: null
+    name: builder-image
+    secretValue: null
+    value: quay.io/openshifttest/php_mtc:7.3-ubi8
+  source:
+    git:
+      url: https://github.com/sclorg/cakephp-ex.git
+    type: Git
+  strategy:
+    kind: ClusterBuildStrategy
+    name: source-to-image

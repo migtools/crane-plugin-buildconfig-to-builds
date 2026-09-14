@@ -1,0 +1,32 @@
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  annotations:
+    buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
+    buildconfig-to-shipwright/inline-dockerfile-configmap: inputimage-dockerfile
+    crane.konveyor.io/conversion-warnings: |-
+      [/inputimage] ImageStream reference "ruby:3.3-ubi8" in namespace "openshift" could not be resolved — no --imagestream-mapping provided. Using fallback: image-registry.openshift-image-registry.svc:5000/openshift/ruby:3.3-ubi8. Provide --imagestream-mapping to set the correct image reference.
+      [/inputimage] Inline Dockerfile on BuildConfig /inputimage cannot be consumed by the buildah strategy; its content was preserved in ConfigMap /inputimage-dockerfile (key Dockerfile). Commit it to the source repository as the Dockerfile, or see https://issues.redhat.com/browse/BUILD-1495, before running the Build.
+      [/inputimage] No source type specified for BuildConfig: inputimage
+      [/inputimage] Output ImageStreamTag "inputimage:latest" resolved to fallback URL: image-registry.openshift-image-registry.svc:5000//inputimage:latest
+      [/inputimage] No explicit pushSecret found for ImageStreamTag output. Ensure the BuildRun uses a ServiceAccount with internal registry push access.
+      [/inputimage] BuildConfig inputimage uses runPolicy "Serial", which is dropped: OpenShift queued its builds and ran them one at a time, but Shipwright BuildRuns run concurrently. Serialize the runs in your CI/CD pipeline if build ordering matters, for example when several BuildRuns push the same image tag
+    crane.konveyor.io/converted-from: build.openshift.io/v1/BuildConfig/inputimage
+  labels:
+    build: inputimage
+  name: inputimage
+spec:
+  env:
+  - name: BUILD_LOGLEVEL
+    value: "2"
+  output:
+    image: image-registry.openshift-image-registry.svc:5000//inputimage:latest
+  paramValues:
+  - configMapValue: null
+    name: runtime-stage-from
+    secretValue: null
+    value: image-registry.openshift-image-registry.svc:5000/openshift/ruby:3.3-ubi8
+  source: null
+  strategy:
+    kind: ClusterBuildStrategy
+    name: buildah
