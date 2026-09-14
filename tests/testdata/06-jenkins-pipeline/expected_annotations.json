@@ -1,0 +1,4 @@
+{
+  "buildconfig-to-shipwright/conversion-outcome": "skipped",
+  "buildconfig-to-shipwright/conversion-reason": "JenkinsPipeline build strategy is not supported for conversion"
+}

@@ -1,4 +1,4 @@
-module github.com/konveyor/crane-plugin-buildconfig-to-shipwright/tests
+module github.com/migtools/crane-plugin-buildconfig-to-shipwright/tests
 
 go 1.26.0
 

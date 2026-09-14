@@ -10,119 +10,6 @@ import (
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
-// CompareWithGoldenFile compares a Build against an expected golden YAML file.
-// Variables in the golden file are expanded before comparison.
-func CompareWithGoldenFile(buildObj *unstructured.Unstructured, goldenPath string, vars map[string]string) ([]string, error) {
-	// Read golden file
-	goldenData, err := os.ReadFile(goldenPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read golden file: %w", err)
-	}
-
-	// Expand variables in golden file
-	expandedGolden := expandVars(string(goldenData), vars)
-
-	// Parse golden YAML
-	var expectedMap map[string]interface{}
-	if err := sigsyaml.Unmarshal([]byte(expandedGolden), &expectedMap); err != nil {
-		return nil, fmt.Errorf("failed to parse golden YAML: %w", err)
-	}
-
-	// Get actual Build as map
-	actualMap := buildObj.Object
-
-	// Compare and collect differences
-	var diffs []string
-	compareMaps("", expectedMap, actualMap, &diffs)
-
-	return diffs, nil
-}
-
-// expandVars expands ${VAR} references in a string using the provided vars map.
-func expandVars(s string, vars map[string]string) string {
-	result := s
-	for key, value := range vars {
-		result = strings.ReplaceAll(result, fmt.Sprintf("${%s}", key), value)
-	}
-	return result
-}
-
-// compareMaps recursively compares two maps and collects differences.
-func compareMaps(path string, expected, actual map[string]interface{}, diffs *[]string) {
-	// Check for missing keys in actual (expected fields not present)
-	for key := range expected {
-		currentPath := key
-		if path != "" {
-			currentPath = path + "." + key
-		}
-
-		expectedVal, _ := expected[key]
-		actualVal, exists := actual[key]
-
-		if !exists {
-			*diffs = append(*diffs, fmt.Sprintf("missing field: %s", currentPath))
-			continue
-		}
-
-		// Compare values recursively
-		compareValues(currentPath, expectedVal, actualVal, diffs)
-	}
-
-	// Check for unexpected keys in actual (extra fields not in expected)
-	for key := range actual {
-		currentPath := key
-		if path != "" {
-			currentPath = path + "." + key
-		}
-
-		if _, exists := expected[key]; !exists {
-			*diffs = append(*diffs, fmt.Sprintf("unexpected field: %s", currentPath))
-		}
-	}
-}
-
-// compareValues compares two values recursively.
-func compareValues(path string, expected, actual interface{}, diffs *[]string) {
-	switch expectedVal := expected.(type) {
-	case map[string]interface{}:
-		actualMap, ok := actual.(map[string]interface{})
-		if !ok {
-			*diffs = append(*diffs, fmt.Sprintf("%s: type mismatch (expected map, got %T)", path, actual))
-			return
-		}
-		compareMaps(path, expectedVal, actualMap, diffs)
-
-	case []interface{}:
-		actualSlice, ok := actual.([]interface{})
-		if !ok {
-			*diffs = append(*diffs, fmt.Sprintf("%s: type mismatch (expected array, got %T)", path, actual))
-			return
-		}
-		if len(expectedVal) != len(actualSlice) {
-			*diffs = append(*diffs, fmt.Sprintf("%s: length mismatch (expected %d, got %d)", path, len(expectedVal), len(actualSlice)))
-			return
-		}
-		for i := range expectedVal {
-			compareValues(fmt.Sprintf("%s[%d]", path, i), expectedVal[i], actualSlice[i], diffs)
-		}
-
-	default:
-		// Compare scalar values
-		if fmt.Sprintf("%v", expected) != fmt.Sprintf("%v", actual) {
-			*diffs = append(*diffs, fmt.Sprintf("%s: expected '%v', got '%v'", path, expected, actual))
-		}
-	}
-}
-
-// BuildToYAML converts a Build unstructured object to formatted YAML string.
-func BuildToYAML(buildObj *unstructured.Unstructured) (string, error) {
-	yamlBytes, err := sigsyaml.Marshal(buildObj.Object)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal Build to YAML: %w", err)
-	}
-	return string(yamlBytes), nil
-}
-
 // NormalizeYAML normalizes YAML for comparison (removes formatting differences).
 func NormalizeYAML(yamlStr string) (string, error) {
 	var data interface{}
@@ -138,51 +25,108 @@ func NormalizeYAML(yamlStr string) (string, error) {
 	return string(normalized), nil
 }
 
-// DiffYAML compares two YAML strings and returns a diff.
-func DiffYAML(expected, actual string) (string, error) {
-	// Normalize both YAMLs
-	normExpected, err := NormalizeYAML(expected)
-	if err != nil {
-		return "", fmt.Errorf("failed to normalize expected YAML: %w", err)
+// CompareBuildsWithGoldenFile compares generated resources against kind-specific golden files.
+// Pattern: Build.yaml, ServiceAccount.yaml, ConfigMap.yaml
+// Missing file = expects that kind NOT generated
+func CompareBuildsWithGoldenFile(resources []*unstructured.Unstructured, testDirPath string) ([]string, error) {
+	var diffs []string
+
+	// Group resources by kind
+	resourcesByKind := make(map[string][]*unstructured.Unstructured)
+	for _, res := range resources {
+		kind := res.GetKind()
+		resourcesByKind[kind] = append(resourcesByKind[kind], res)
 	}
 
-	normActual, err := NormalizeYAML(actual)
-	if err != nil {
-		return "", fmt.Errorf("failed to normalize actual YAML: %w", err)
-	}
+	// Check each kind's golden file
+	expectedKinds := []string{"Build", "ServiceAccount", "ConfigMap"}
+	for _, kind := range expectedKinds {
+		goldenPath := fmt.Sprintf("%s/%s.yaml", testDirPath, kind)
+		actualResources := resourcesByKind[kind]
 
-	if normExpected == normActual {
-		return "", nil // No diff
-	}
-
-	// Simple line-by-line diff
-	expectedLines := strings.Split(normExpected, "\n")
-	actualLines := strings.Split(normActual, "\n")
-
-	var diff bytes.Buffer
-	maxLines := len(expectedLines)
-	if len(actualLines) > maxLines {
-		maxLines = len(actualLines)
-	}
-
-	for i := 0; i < maxLines; i++ {
-		var expLine, actLine string
-		if i < len(expectedLines) {
-			expLine = expectedLines[i]
-		}
-		if i < len(actualLines) {
-			actLine = actualLines[i]
-		}
-
-		if expLine != actLine {
-			if expLine != "" {
-				diff.WriteString(fmt.Sprintf("- %s\n", expLine))
+		// Check if golden file exists
+		if _, err := os.Stat(goldenPath); os.IsNotExist(err) {
+			// No golden file for this kind
+			if len(actualResources) > 0 {
+				diffs = append(diffs, fmt.Sprintf("Unexpected %s generated (no %s.yaml expected)", kind, kind))
 			}
-			if actLine != "" {
-				diff.WriteString(fmt.Sprintf("+ %s\n", actLine))
+			continue
+		}
+
+		// Golden file exists - read it
+		expectedData, err := os.ReadFile(goldenPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", goldenPath, err)
+		}
+
+		expectedStr := strings.TrimSpace(string(expectedData))
+		if expectedStr == "" {
+			// Empty golden file - expect no resources of this kind
+			if len(actualResources) > 0 {
+				diffs = append(diffs, fmt.Sprintf("Expected no %s, but got %d", kind, len(actualResources)))
+			}
+			continue
+		}
+
+		// Expected content - validate resources
+		if len(actualResources) == 0 {
+			diffs = append(diffs, fmt.Sprintf("Expected %s (from %s.yaml), but none generated", kind, kind))
+			continue
+		}
+
+		// Compare actual resources with golden file
+		var actualYAML bytes.Buffer
+		for i, res := range actualResources {
+			if i > 0 {
+				actualYAML.WriteString("---\n")
+			}
+			yamlBytes, err := sigsyaml.Marshal(res.Object)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal %s to YAML: %w", kind, err)
+			}
+			actualYAML.Write(yamlBytes)
+		}
+
+		// Normalize and compare
+		normExpected, err := NormalizeYAML(expectedStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to normalize %s.yaml: %w", kind, err)
+		}
+
+		normActual, err := NormalizeYAML(actualYAML.String())
+		if err != nil {
+			return nil, fmt.Errorf("failed to normalize actual %s: %w", kind, err)
+		}
+
+		if normExpected != normActual {
+			diffs = append(diffs, fmt.Sprintf("%s mismatch (see %s.yaml)", kind, kind))
+			// Add detailed line diff
+			expectedLines := strings.Split(normExpected, "\n")
+			actualLines := strings.Split(normActual, "\n")
+			maxLines := len(expectedLines)
+			if len(actualLines) > maxLines {
+				maxLines = len(actualLines)
+			}
+			for i := 0; i < maxLines; i++ {
+				var expLine, actLine string
+				if i < len(expectedLines) {
+					expLine = expectedLines[i]
+				}
+				if i < len(actualLines) {
+					actLine = actualLines[i]
+				}
+				if expLine != actLine {
+					diffs = append(diffs, fmt.Sprintf("  Line %d:", i+1))
+					if expLine != "" {
+						diffs = append(diffs, fmt.Sprintf("    Expected: %s", expLine))
+					}
+					if actLine != "" {
+						diffs = append(diffs, fmt.Sprintf("    Actual:   %s", actLine))
+					}
+				}
 			}
 		}
 	}
 
-	return diff.String(), nil
+	return diffs, nil
 }

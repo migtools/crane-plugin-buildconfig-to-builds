@@ -12,7 +12,6 @@ crane-plugin-buildconfig-to-shipwright
 *.dylib
 
 # Test artifacts
-tests/testdata/export/
 *.test
 *.out
 coverage.txt

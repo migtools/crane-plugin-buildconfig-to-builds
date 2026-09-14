@@ -1,0 +1,74 @@
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  annotations:
+    buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
+    buildconfig-to-shipwright/original-triggers: '[{"type":"ConfigChange"}]'
+    crane.konveyor.io/conversion-warnings: |-
+      [buildconfig-test/ruby-hello-world-docker] Output ImageStreamTag "ruby-hello-world:latest" resolved to fallback URL: image-registry.openshift-image-registry.svc:5000/buildconfig-test/ruby-hello-world:latest
+      [buildconfig-test/ruby-hello-world-docker] No explicit pushSecret found for ImageStreamTag output. Ensure the BuildRun uses a ServiceAccount with internal registry push access.
+      [buildconfig-test/ruby-hello-world-docker] BuildConfig ruby-hello-world-docker uses runPolicy "Serial", which is dropped: OpenShift queued its builds and ran them one at a time, but Shipwright BuildRuns run concurrently. Serialize the runs in your CI/CD pipeline if build ordering matters, for example when several BuildRuns push the same image tag
+      [buildconfig-test/ruby-hello-world-docker] BuildConfig ruby-hello-world-docker: ConfigChange trigger is dropped — the automatic first build will not happen; create a BuildRun manually once to start the first build.
+      [buildconfig-test/ruby-hello-world-docker] Found 1 trigger(s) (ConfigChange) on BuildConfig ruby-hello-world-docker — none work in Shipwright today; builds must be started manually or by your own automation.
+    crane.konveyor.io/converted-from: build.openshift.io/v1/BuildConfig/ruby-hello-world-docker
+  labels:
+    app: ruby-hello-world
+    build-type: docker
+  name: ruby-hello-world-docker
+  namespace: buildconfig-test
+spec:
+  output:
+    image: image-registry.openshift-image-registry.svc:5000/buildconfig-test/ruby-hello-world:latest
+  paramValues:
+  - configMapValue: null
+    name: dockerfile
+    secretValue: null
+    value: Dockerfile
+  source:
+    git:
+      revision: master
+      url: https://github.com/openshift/ruby-hello-world.git
+    type: Git
+  strategy:
+    kind: ClusterBuildStrategy
+    name: buildah
+---
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  annotations:
+    buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
+    buildconfig-to-shipwright/original-triggers: '[{"type":"ConfigChange"},{"type":"ImageChange"}]'
+    crane.konveyor.io/conversion-warnings: |-
+      [buildconfig-test/s2i-ruby-app] Output ImageStreamTag "s2i-ruby-app:latest" resolved to fallback URL: image-registry.openshift-image-registry.svc:5000/buildconfig-test/s2i-ruby-app:latest
+      [buildconfig-test/s2i-ruby-app] No explicit pushSecret found for ImageStreamTag output. Ensure the BuildRun uses a ServiceAccount with internal registry push access.
+      [buildconfig-test/s2i-ruby-app] BuildConfig s2i-ruby-app uses runPolicy "Serial", which is dropped: OpenShift queued its builds and ran them one at a time, but Shipwright BuildRuns run concurrently. Serialize the runs in your CI/CD pipeline if build ordering matters, for example when several BuildRuns push the same image tag
+      [buildconfig-test/s2i-ruby-app] BuildConfig s2i-ruby-app: ConfigChange trigger is dropped — the automatic first build will not happen; create a BuildRun manually once to start the first build.
+      [buildconfig-test/s2i-ruby-app] BuildConfig s2i-ruby-app: ImageChange trigger is dropped — builds will no longer start when the strategy image quay.io/centos7/ruby-27-centos7:latest changes. Shipwright has no equivalent of image change triggers today.
+      [buildconfig-test/s2i-ruby-app] Found 2 trigger(s) (ConfigChange, ImageChange) on BuildConfig s2i-ruby-app — none work in Shipwright today; builds must be started manually or by your own automation.
+    crane.konveyor.io/converted-from: build.openshift.io/v1/BuildConfig/s2i-ruby-app
+  labels:
+    app: s2i-ruby-app
+    build-type: s2i
+  name: s2i-ruby-app
+  namespace: buildconfig-test
+spec:
+  env:
+  - name: RACK_ENV
+    value: production
+  - name: RAILS_ENV
+    value: production
+  output:
+    image: image-registry.openshift-image-registry.svc:5000/buildconfig-test/s2i-ruby-app:latest
+  paramValues:
+  - configMapValue: null
+    name: builder-image
+    secretValue: null
+    value: quay.io/centos7/ruby-27-centos7:latest
+  source:
+    git:
+      url: https://github.com/sclorg/ruby-ex.git
+    type: Git
+  strategy:
+    kind: ClusterBuildStrategy
+    name: source-to-image

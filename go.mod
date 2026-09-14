@@ -8,6 +8,7 @@ require (
 	github.com/openshift/api v0.0.0-20220525145417-ee5b62754c68
 	github.com/shipwright-io/build v0.19.0
 	github.com/sirupsen/logrus v1.9.4
+	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.34.4
 	k8s.io/apimachinery v0.34.4
 	sigs.k8s.io/yaml v1.6.0
