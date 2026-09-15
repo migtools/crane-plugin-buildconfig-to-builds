@@ -1,0 +1,29 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: mydockertest
+  labels:
+    name: test
+spec:
+  triggers: []
+  runPolicy: Serial
+  source:
+    dockerfile: |
+      FROM image-registry.openshift-image-registry.svc:5000/openshift/tools:latest
+  strategy:
+    type: Docker
+    dockerStrategy:
+      env:
+        - name: BUILD_LOGLEVEL
+          value: "5"
+  resources: {}
+  output:
+    to:
+      kind: ImageStreamTag
+      name: mydockertest:latest
+  postCommit:
+    command: ["touch"]
+    args: ["/tmp/postCommit"]
+  nodeSelector: null
+status:
+  lastVersion: 0

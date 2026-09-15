@@ -1,0 +1,43 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  annotations:
+    description: Defines how to build the application
+    openshift.io/generated-by: OpenShiftNewApp
+    template.alpha.openshift.io/wait-for-ready: "true"
+  creationTimestamp: null
+  labels:
+    app: cakephp-mysql-persistent
+    template: cakephp-mysql-persistent
+  name: cakephp-mysql-persistent
+spec:
+  nodeSelector: null
+  output:
+    to:
+      kind: ImageStreamTag
+      name: cakephp-mysql-persistent:latest
+  postCommit:
+    script: ./vendor/bin/phpunit
+  resources: {}
+  runPolicy: Serial
+  source:
+    git:
+      uri: https://github.com/sclorg/cakephp-ex.git
+    type: Git
+  strategy:
+    sourceStrategy:
+      env:
+      - name: COMPOSER_MIRROR
+      from:
+        kind: DockerImage
+        name: 'quay.io/openshifttest/php_mtc:7.3-ubi8'
+    type: Source
+  triggers:
+  - imageChange: {}
+    type: ImageChange
+  - type: ConfigChange
+  - github:
+      secret: dummy-webhook-secret-for-testing-only
+    type: GitHub
+status:
+  lastVersion: 0

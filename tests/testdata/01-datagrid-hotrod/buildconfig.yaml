@@ -1,0 +1,41 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  labels:
+    application: eap-app
+  name: eap-app
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: eap-app:latest
+  source:
+    contextDir: .
+    git:
+      ref: master
+      uri: https://github.com/jboss-openshift/openshift-quickstarts
+    type: Git
+  strategy:
+    sourceStrategy:
+      env:
+      - name: MAVEN_MIRROR_URL
+        value: ""
+      - name: MAVEN_ARGS_APPEND
+        value: ""
+      - name: ARTIFACT_DIR
+        value: ""
+      forcePull: true
+      from:
+        kind: DockerImage
+        name: "quay.io/jboss-eap71-openshift:1.3"
+    type: Source
+  triggers:
+  - github:
+      secret: github-secret
+    type: GitHub
+  - generic:
+      secret: generic-secret
+    type: Generic
+  - imageChange: {}
+    type: ImageChange
+  - type: ConfigChange
