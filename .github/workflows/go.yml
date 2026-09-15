@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build, unit tests, and E2E tests
+    name: Build and unit test
     runs-on: ubuntu-latest
     steps:
       - name: Check out source code
