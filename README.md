@@ -5,6 +5,29 @@ A [crane](https://github.com/migtools/crane) transform plugin that converts Open
 (`shipwright.io/v1beta1`). It runs offline, as part of `crane transform`, and never talks to
 a cluster.
 
+1. [What it does](#what-it-does)
+2. [Prerequisites](#prerequisites)
+   - [Install crane](#install-crane)
+   - [Install the plugin](#install-the-plugin)
+3. [Usage with crane](#usage-with-crane)
+   - [1. Export the namespace](#1-export-the-namespace)
+   - [2. Transform](#2-transform)
+   - [3. Write the output, then read it](#3-write-the-output-then-read-it)
+   - [4. Apply to the target cluster](#4-apply-to-the-target-cluster)
+4. [Worked examples](#worked-examples)
+5. [Plugin flags](#plugin-flags)
+   - [Redirecting output images](#redirecting-output-images)
+6. [Documentation](#documentation)
+7. [Working on the plugin](#working-on-the-plugin)
+8. [Issue tracking](#issue-tracking)
+9. [Development skills](#development-skills)
+   - [Workflow](#workflow)
+   - [The skills](#the-skills)
+   - [Getting started](#getting-started)
+   - [Two review skills, two scopes](#two-review-skills-two-scopes)
+   - [Walkthrough](#walkthrough)
+10. [Related](#related)
+
 ## What it does
 
 For every resource in a crane export:
@@ -267,6 +290,206 @@ Minikube cluster with Tekton and Shipwright are in [hack/README.md](hack/README.
 
 Work on this plugin is tracked in Jira, project BUILD. crane itself is tracked on GitHub.
 File and pick up work in Jira.
+
+## Development skills
+
+This repo ships nine [Claude Code](https://claude.com/claude-code) skills under
+`.claude/skills/`. Together they automate the path from a Jira BUILD issue to a merged
+pull request: research and triage, implementation, unit and cluster testing, a pre-PR
+review gate, a documentation pass, opening the PR, multi-agent review of the published PR,
+and working the review feedback back into the branch.
+
+Each one is invoked as a slash command from inside a clone of this repo. Every skill's
+full instructions live in its own `SKILL.md`. This section is the map, not the manual.
+
+They are development tooling only. Nothing here is needed to *use* the plugin; if you are
+migrating BuildConfigs, [Usage with crane](#usage-with-crane) is the section you want.
+
+### Workflow
+
+```
+  Setup    ┌────────────────────────────────────────────┐
+           │  /setup-repos                              │  ◄── run once per machine
+           │  finds your local clones, writes their     │
+           │  paths to repo.md. Every skill reads it    │
+           └─────────────────────┬──────────────────────┘
+                                 │
+  ═════════════════════════════════════════════════════════════
+   Everything below runs once per Jira issue
+  ═════════════════════════════════════════════════════════════
+                                 │
+                                 ▼
+  Phase 1  ┌────────────────────────────────────────────┐
+           │  /tech-design BUILD-XXXX                   │  ◄── priority comes last, and
+           │  should this be built at all? Checks       │      only with a file:line
+           │  upstream, shipped code and open PRs       │      behind every claim
+           │  → design doc, once you approve it         │
+           └─────────────────────┬──────────────────────┘
+                                 │
+  ═════════════════════════════════════════════════════════════
+   DECISION: is the change needed, and is it unblocked?
+     No  → record the finding in Jira, close it, done
+     Yes → continue below
+  ═════════════════════════════════════════════════════════════
+                                 │
+                                 ▼
+  Phase 2  ┌────────────────────────────────────────────┐
+           │  /tech-implement BUILD-XXXX                │  ◄── refuses to start
+           │  turns the design doc into code, in its    │      without a design doc
+           │  own worktree so a shared clone is safe    │
+           │  catalog first, then converter, then tests │
+           └─────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+  Phase 3  ┌────────────────────────────────────────────┐
+           │  /tech-test BUILD-XXXX unit                │  ◄── no cluster — runs on
+           │  compiles the branch, runs the Go suite    │      any clone
+           │  and the offline conversion checks         │
+           └─────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+  Phase 4  ┌────────────────────────────────────────────┐
+           │  /tech-review BUILD-XXXX                   │  ◄── plus five checks a
+           │  the gate before a branch becomes a PR:    │      general reviewer
+           │  reviewers in parallel, then an agent      │      does not perform
+           │  paid to disprove every blocker            │
+           └─────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+  Phase 5  ┌────────────────────────────────────────────┐
+           │  /tech-test BUILD-XXXX cluster             │  ◄── needs a real cluster.
+           │  runs the original BuildConfig first,      │      Succeeding is not the
+           │  then the converted one, and compares      │      same as doing the same job
+           │  the output images by digest and labels    │
+           └─────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+  Phase 6  ┌────────────────────────────────────────────┐
+           │  /tech-document BUILD-XXXX                 │  ◄── reads the diff, fixes
+           │  brings the docs in step with the code     │      every stale sentence
+           │  before the branch becomes a PR            │      the change created
+           └─────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+  Phase 7  ┌────────────────────────────────────────────┐
+           │  /create-pr BUILD-XXXX                     │  ◄── commits signed, pushes
+           │  commits, pushes to the fork, opens the PR │      to the fork, never to
+           │  and runs the docs check itself first      │      the upstream remote
+           └─────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+  Phase 8  ┌────────────────────────────────────────────┐
+           │  /deep-review <PR#>                        │  ◄── open PRs only — yours
+           │  six reviewers with non-overlapping        │      or anyone else's.
+           │  beats, then a challenger that can only    │      Silence counts as a finding
+           │  delete findings, never add them           │
+           └─────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+  Phase 9  ┌────────────────────────────────────────────┐
+           │  /address-review <PR#>                     │  ◄── triages each thread into
+           │  reads every thread, triages fix vs        │      fix, answer or push back,
+           │  answer vs push back, replies and          │      then resolves it
+           │  resolves after you approve                │
+           └────────────────────────────────────────────┘
+
+  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+
+  Anytime:
+    /setup-repos update      — re-scan after cloning a new repo
+    /tech-document --audit   — check the docs against the code, edit nothing
+    /deep-review <PR#>       — review any open PR, no local branch needed
+```
+
+Each phase is its own command. Review sits between the two test stages on purpose: the
+unit stage is cheap and catches what review should not waste time on, while the cluster
+stage is slow enough that repeating it after review-driven changes is the largest
+avoidable cost in the loop.
+
+### The skills
+
+| Command | What it does | Needs first | Leaves behind |
+|---------|--------------|-------------|---------------|
+| `/setup-repos [update]` | Finds your local clones of the repos this work touches and writes their paths to `repo.md`. Every other skill reads that file, so no skill hardcodes a path that only exists on your machine | — | `repo.md` at the project root |
+| `/tech-design <ISSUE-KEY>` | Works out whether an issue should be built at all, before working out how. Checks whether the feature already exists upstream, already shipped, or is sitting in someone's open PR. Then it asks whether Shipwright's design makes it unnecessary anyway. Priority and story points come last, and every claim has to cite a file and line | `repo.md` | A design doc under `designs/`, plus a Jira comment. Both are written only after you approve them |
+| `/tech-implement <ISSUE-KEY>` | Turns the approved design doc into code, and refuses to start without one. Works in its own throwaway worktree rather than your checkout, because two sessions sharing a clone share one index and one HEAD. Strategy catalog changes go first, then the converter, then the tests. A conversion cannot be tested against a strategy parameter that does not exist yet | A design doc | A branch on your fork; test results under `designs/test-results/` |
+| `/tech-test <ISSUE-KEY> unit` | Compiles the branch and runs the Go suite plus the offline conversion checks. No cluster, so it runs on any clone. It goes before review, because reviewing code that does not compile wastes the reviewer | A branch | A run report |
+| `/tech-review [<ISSUE-KEY>] [--fix]` | The gate a branch passes before it becomes a PR. Runs general reviewers in parallel, then hands every blocking finding to a separate agent whose only job is to disprove it. A false blocker stops a good branch, and that is the expensive failure. Then adds five checks no general reviewer performs; the sharpest compares the parameter names the converter emits against those the strategy YAML actually defines, since a mismatch compiles cleanly and only fails on the cluster with `UndefinedParameter` | A branch whose unit tests pass | Findings in the terminal. Commits nothing |
+| `/tech-test <ISSUE-KEY> cluster` | Runs the original BuildConfig on a real cluster first, then the converted Build, and compares the two output images by digest and labels. A converted Build that merely succeeds proves nothing. The question is whether it did the same job as the one it replaced. That comparison is what makes it a test rather than a smoke check | A reviewed branch, `oc`, and a cluster | A run report; fixtures archived, then only what it created is deleted |
+| `/tech-document [<ISSUE-KEY>] [--audit]` | Reads the branch diff and asks one question of every doc in the repo: is it still true. It proposes the edits, agrees them with you, and writes them on the same branch, but never commits. `--audit` checks the whole doc map against the code and edits nothing. `/create-pr` runs it as a safety net before it commits | A branch that changed code | Doc edits on the branch, left unstaged |
+| `/create-pr [<ISSUE-KEY>]` | Commits the branch signed and signed-off, pushes to the fork remote and never to the upstream one, and opens or amends the PR against `main` with the repo's title and body conventions. Runs the docs check first, and updates the linked Jira story when you confirm it | A branch with changes | A commit, a pushed branch, an open PR |
+| `/deep-review <pr-number\|url>` | Six reviewers read an open PR in parallel, each with an explicit list of what it does and does not own, so they do not all report the same naming nit. A final challenger reads the findings and the diff, but never the orchestrator's reasoning, and can only delete findings, never add them. If a top-tier reviewer returns nothing, that silence is recorded as a finding rather than passing as a clean bill of health | An open PR | Findings in the terminal. Posts nothing unless asked |
+| `/address-review <pr-number>` | Reads every review thread, write-up and bot comment on an open PR, triages each into fix, answer or push back, and shows you the table. After your go it applies the fixes, tests with `GOWORK=off`, commits, pushes to the fork, replies where each comment was left, and resolves the threads | An open PR with feedback | Fix commits, replies posted, threads resolved |
+
+### Getting started
+
+You need [Claude Code](https://claude.com/claude-code), `gh` authenticated against GitHub,
+and `jira-cli` configured. `/tech-design` checks `jira me` before it does anything else.
+The `/tech-test` cluster stage also needs `oc` and a reachable OpenShift cluster.
+
+Then, once per machine:
+
+```
+/setup-repos
+```
+
+It scans your work directory for the clones the other skills read and writes their paths
+to `repo.md`. Those paths differ per machine, so `repo.md` is gitignored and never
+committed; `.claude/skills/setup-repos/repo_example.md` is the template it follows. Run
+`/setup-repos update` after cloning a new repo rather than editing the file by hand.
+
+`designs/` is gitignored for the same reason. Design docs and test results are working
+notes, not deliverables.
+
+### Two review skills, two scopes
+
+`/tech-review` and `/deep-review` sound alike. They do not overlap, and neither calls the
+other.
+
+|  | `/tech-review` | `/deep-review` |
+|--|----------------|----------------|
+| **When** | Before the PR exists, on a local branch | On an open PR |
+| **Scope** | The branch and its paired strategy change | The PR as published |
+| **Unique value** | Cross-repo consistency, test evidence | Adversarial multi-agent depth |
+| **Reviews others' work** | No | Yes |
+
+Neither checks out your branch or writes to Jira, and both are report-only by default.
+
+`/deep-review` is not original work: its review logic is vendored verbatim from the
+[fullsend](https://github.com/fullsend-ai/fullsend) agent bundle under Apache-2.0. See
+[`.claude/skills/deep-review/README.md`](.claude/skills/deep-review/README.md) for the
+attribution, the pinned upstream commit, and the local adaptations.
+
+### Walkthrough
+
+Taking one issue from triage to a reviewed, answered pull request:
+
+```
+/setup-repos                     # once per machine, writes repo.md
+
+/tech-design BUILD-2269          # research → designs/BUILD-2269-*.md
+                                 # stop here if the issue turns out to be
+                                 # unnecessary, already done, or blocked
+
+/tech-implement BUILD-2269       # branch, code, commit (no push yet)
+
+/tech-test BUILD-2269 unit       # compile gate + Go suite, no cluster
+/tech-review BUILD-2269          # reviewers, challenger, cross-repo checks
+/tech-test BUILD-2269 cluster    # real OpenShift, baseline vs converted
+
+/tech-document BUILD-2269        # bring the docs in step with the code
+/create-pr BUILD-2269            # commit, push to your fork, open the PR
+```
+
+Then review it as published and work the feedback back into the branch:
+
+```
+/deep-review 32                  # multi-agent review of the published PR
+/address-review 32               # triage each thread, fix, reply, resolve
+```
+
+Push branches to your fork, never to `origin`. Upstream changes land through pull
+requests only.
 
 ## Related
 
