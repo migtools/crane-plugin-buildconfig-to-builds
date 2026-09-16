@@ -204,6 +204,10 @@ done
 
 Record both results. They go in the compliance report whether present or not.
 
+`qodo` also needs `agent.toml` — the command definition the reviewer runs, untracked in
+the checkout. Probe for it next to the checkout root and record it the same way; without
+it the qodo reviewer reports `unavailable` rather than falling back to a free-form prompt.
+
 ### 0e. Find the design doc
 
 ```bash
@@ -331,7 +335,7 @@ that skill's report mode. Nothing runs on the session model. Security depth is
 | Reviewer | How to run | Prompt / instructions | Model | When |
 |---|---|---|---|---|
 | `cli-review` (coderabbit) | **sub-agent** | `reviewers/cli-review.md` | sonnet | `coderabbit` on PATH and not excluded by `--cli` |
-| `cli-review` (qodo) | **sub-agent** | `reviewers/cli-review.md` | sonnet | `qodo` on PATH and not excluded by `--cli` |
+| `cli-review` (qodo) | **sub-agent** | `reviewers/cli-review.md` | sonnet | `qodo` on PATH, `agent.toml` present, and not excluded by `--cli` |
 | `code-review` | **sub-agent** that forks the built-in `/code-review "$BRANCH" low` | `reviewers/code-review.md` | opus | Always |
 | `tech-document` | **sub-agent** | the body of `.claude/skills/tech-document/SKILL.md`, with the argument line `<branch> --report --work "$WT"` | opus | Always |
 
