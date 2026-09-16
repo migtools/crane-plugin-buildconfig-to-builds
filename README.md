@@ -264,8 +264,8 @@ Minikube cluster with Tekton and Shipwright are in [hack/README.md](hack/README.
 [AGENTS.md](AGENTS.md). Pull requests run the unit tests, the documentation tests, and the
 cluster E2E.
 
-The repo also ships six Claude Code skills that take a Jira BUILD issue from triage to a
-reviewed pull request. [development.md](development.md) is the map: the workflow, what each
+The repo also ships nine Claude Code skills that take a Jira BUILD issue from triage to a
+merged pull request. [development.md](development.md) is the map: the workflow, what each
 skill needs and leaves behind, and a walkthrough.
 
 ## Issue tracking

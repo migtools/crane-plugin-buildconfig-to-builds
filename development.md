@@ -1,9 +1,10 @@
 # Development skills
 
-This repo ships six [Claude Code](https://claude.com/claude-code) skills under
-`.claude/skills/`. Together they automate the path from a Jira BUILD issue to a reviewed
+This repo ships nine [Claude Code](https://claude.com/claude-code) skills under
+`.claude/skills/`. Together they automate the path from a Jira BUILD issue to a merged
 pull request: research and triage, implementation, unit and cluster testing, a pre-PR
-review gate, and multi-agent review of the published PR.
+review gate, a docs sync, opening the PR, multi-agent review of the published PR, and
+addressing the feedback that comes back.
 
 Each one is invoked as a slash command from inside a clone of this repo. Every skill's
 full instructions live in its own `SKILL.md`. This page is the map, not the manual.
@@ -72,16 +73,31 @@ want.
                                  │
                                  ▼
   Phase 6  ┌────────────────────────────────────────────┐
-           │  open the PR against migtools/             │
-           │  crane-plugin-buildconfig-to-shipwright    │
+           │  /tech-document BUILD-XXXX                 │  ◄── before the branch
+           │  brings the docs in step with the code:    │      becomes a PR
+           │  support matrix, architecture page, ADRs   │
            └─────────────────────┬──────────────────────┘
                                  │
                                  ▼
   Phase 7  ┌────────────────────────────────────────────┐
+           │  /create-pr BUILD-XXXX                     │  ◄── commit, push to the
+           │  commits signed, pushes to your fork, and  │      fork, open upstream.
+           │  opens the PR with this repo's conventions │      Never pushes to origin
+           └─────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+  Phase 8  ┌────────────────────────────────────────────┐
            │  /deep-review <PR#>                        │  ◄── open PRs only — yours
-           │  six reviewers with non-overlapping        │      or anyone else's.
+           │  up to six reviewers with non-overlapping  │      or anyone else's.
            │  beats, then a challenger that can only    │      Silence counts as a finding
            │  delete findings, never add them           │
+           └─────────────────────┬──────────────────────┘
+                                 │
+                                 ▼
+  Phase 9  ┌────────────────────────────────────────────┐
+           │  /address-review <PR#>                     │  ◄── triages every thread
+           │  reads every thread, fixes what is valid,  │      into fix, answer or
+           │  replies, resolves, and re-checks          │      push back
            └────────────────────────────────────────────┘
 
   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
@@ -106,7 +122,10 @@ avoidable cost in the loop.
 | `/tech-test <ISSUE-KEY> unit` | Compiles the branch and runs the Go suite plus the offline conversion checks. No cluster, so it runs on any clone. It goes before review, because reviewing code that does not compile wastes the reviewer | A branch | A run report |
 | `/tech-review [<ISSUE-KEY>] [--fix]` | The gate a branch passes before it becomes a PR. Runs general reviewers in parallel, then hands every blocking finding to a separate agent whose only job is to disprove it. A false blocker stops a good branch, and that is the expensive failure. Then adds five checks no general reviewer performs; the sharpest compares the parameter names the converter emits against those the strategy YAML actually defines, since a mismatch compiles cleanly and only fails on the cluster with `UndefinedParameter` | A branch whose unit tests pass | Findings in the terminal. Commits nothing |
 | `/tech-test <ISSUE-KEY> cluster` | Runs the original BuildConfig on a real cluster first, then the converted Build, and compares the two output images by digest and labels. A converted Build that merely succeeds proves nothing. The question is whether it did the same job as the one it replaced. That comparison is what makes it a test rather than a smoke check | A reviewed branch, `oc`, and a cluster | A run report; fixtures archived, then only what it created is deleted |
-| `/deep-review <pr-number\|url>` | Six reviewers read an open PR in parallel, each with an explicit list of what it does and does not own, so they do not all report the same naming nit. A final challenger reads the findings and the diff, but never the orchestrator's reasoning, and can only delete findings, never add them. If a top-tier reviewer returns nothing, that silence is recorded as a finding rather than passing as a clean bill of health | An open PR | Findings in the terminal. Posts nothing unless asked |
+| `/tech-document [<ISSUE-KEY>]` | Brings the docs in step with a code change before the branch becomes a PR: the support-matrix row when a warning moved, the architecture page when the pipeline order changed, an ADR when a new rule was decided. Can also audit the whole doc map against the code | A branch whose code changed | Doc edits on the branch |
+| `/create-pr [<ISSUE-KEY>]` | Commits signed-off, pushes to your fork, and opens (or amends) the PR against upstream with this repo's conventions enforced, updating the Jira story when asked. Never pushes to `origin` | A branch ready to publish | A commit, a fork push, and an open PR |
+| `/deep-review <pr-number\|url>` | Up to six reviewers read an open PR in parallel, each with an explicit list of what it does and does not own, so they do not all report the same naming nit. A challenger then runs as its own stage: it reads the findings and the diff, but never the orchestrator's reasoning, and can only delete findings, never add them. If a top-tier reviewer returns nothing, that silence is recorded as a finding rather than passing as a clean bill of health | An open PR | Findings in the terminal. Posts nothing unless asked |
+| `/address-review [<pr-number\|url>]` | Reads every inline thread, review write-up and PR comment, the bots and your own `/deep-review` verdict included, and triages each into fix, answer or push back. After you approve the table it fixes the code, tests with `GOWORK=off`, commits signed, pushes to the fork, replies where each comment was left, and resolves the threads | An open PR with feedback | Fixes on the branch; replies and resolved threads on the PR |
 
 ## Getting started
 
@@ -149,7 +168,7 @@ attribution, the pinned upstream commit, and the local adaptations.
 
 ## Walkthrough
 
-Taking one issue from triage to a reviewed pull request:
+Taking one issue from triage to a merged pull request:
 
 ```
 /setup-repos                     # once per machine, writes repo.md
@@ -158,22 +177,20 @@ Taking one issue from triage to a reviewed pull request:
                                  # stop here if the issue turns out to be
                                  # unnecessary, already done, or blocked
 
-/tech-implement BUILD-2269       # branch, code, commit, push to your fork
+/tech-implement BUILD-2269       # branch, code, commit
 
 /tech-test BUILD-2269 unit       # compile gate + Go suite, no cluster
 /tech-review BUILD-2269          # reviewers, challenger, cross-repo checks
 /tech-test BUILD-2269 cluster    # real OpenShift, baseline vs converted
+/tech-document BUILD-2269        # bring the docs in step with the code
 ```
 
-Then open the PR against upstream and review it as published:
-
-```bash
-gh pr create --repo migtools/crane-plugin-buildconfig-to-shipwright \
-  --head <your-fork-owner>:BUILD-2269-sa-warning --base main
-```
+Then publish and review the PR, and address what comes back:
 
 ```
+/create-pr BUILD-2269            # commit, push to your fork, open the PR
 /deep-review 32                  # multi-agent review of the published PR
+/address-review 32               # triage the threads, fix, reply, resolve
 ```
 
 Push branches to your fork, never to `origin`. Upstream changes land through pull
