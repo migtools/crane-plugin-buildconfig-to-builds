@@ -1,0 +1,27 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  labels:
+    build: inputimage
+  name: inputimage
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: inputimage:latest
+  source:
+    dockerfile: |-
+      # Bug 1694859: ensure symlinks are followed
+      FROM ruby
+      RUN mkdir -p /opt/app-root/test-links && \
+          ln -s ../../rh/6/root/usr/bin /opt/app-root/test-links/bin
+  strategy:
+    type: Docker
+    dockerStrategy:
+      env:
+        - name: "BUILD_LOGLEVEL"
+          value: "2"
+      from:
+        kind: ImageStreamTag
+        name: ruby:3.3-ubi8
+        namespace: openshift

@@ -1,0 +1,27 @@
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  annotations:
+    buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
+    buildconfig-to-shipwright/inline-dockerfile-configmap: mydockertest-dockerfile
+    crane.konveyor.io/conversion-warnings: |-
+      [/mydockertest] Inline Dockerfile on BuildConfig /mydockertest cannot be consumed by the buildah strategy; its content was preserved in ConfigMap /mydockertest-dockerfile (key Dockerfile). Commit it to the source repository as the Dockerfile, or see https://issues.redhat.com/browse/BUILD-1495, before running the Build.
+      [/mydockertest] No source type specified for BuildConfig: mydockertest
+      [/mydockertest] Output ImageStreamTag "mydockertest:latest" resolved to fallback URL: image-registry.openshift-image-registry.svc:5000//mydockertest:latest
+      [/mydockertest] No explicit pushSecret found for ImageStreamTag output. Ensure the BuildRun uses a ServiceAccount with internal registry push access.
+      [/mydockertest] BuildConfig mydockertest uses runPolicy "Serial", which is dropped: OpenShift queued its builds and ran them one at a time, but Shipwright BuildRuns run concurrently. Serialize the runs in your CI/CD pipeline if build ordering matters, for example when several BuildRuns push the same image tag
+      [/mydockertest] PostCommit hook (command: touch, args: /tmp/postCommit) has no Shipwright equivalent and was dropped from BuildConfig 'mydockertest'. In OpenShift this ran inside the built image before the push, and a failure failed the build. To replicate, add a test step after the BuildRun in a Tekton Pipeline — note this runs after the image is pushed, so it can no longer block a bad image from reaching the registry.
+    crane.konveyor.io/converted-from: build.openshift.io/v1/BuildConfig/mydockertest
+  labels:
+    name: test
+  name: mydockertest
+spec:
+  env:
+  - name: BUILD_LOGLEVEL
+    value: "5"
+  output:
+    image: image-registry.openshift-image-registry.svc:5000//mydockertest:latest
+  source: null
+  strategy:
+    kind: ClusterBuildStrategy
+    name: buildah

@@ -1,0 +1,4 @@
+{
+  "buildconfig-to-shipwright/conversion-outcome": "skipped",
+  "buildconfig-to-shipwright/conversion-reason": "BuildConfig has no output image (spec.output.to is missing or empty); a Shipwright Build requires spec.output.image"
+}
