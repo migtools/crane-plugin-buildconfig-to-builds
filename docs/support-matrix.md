@@ -43,7 +43,7 @@ The "What happens" column uses these words:
   you can check for them yourself.
 - **Skipped** and **Failed.** The whole BuildConfig is not converted. See the next section.
 
-Warnings are quoted in the [Warning reference](#warning-reference) at the end, keyed [W1](#w1) to [W68](#w68). Each number is an anchor: `#w12` jumps to [W12](#w12).
+Warnings are quoted in the [Warning reference](#warning-reference) at the end, keyed [W1](#w1) to [W70](#w70). Each number is an anchor: `#w12` jumps to [W12](#w12).
 In the quotes, `…` marks a value the plugin fills in, such as a BuildConfig name.
 
 ## What stops a BuildConfig from converting
@@ -106,7 +106,7 @@ Either way the BuildConfig itself stays exactly as it was.
 | `dockerStrategy.buildArgs[].valueFrom.configMapKeyRef` | Converted | `spec.paramValues[build-args]` as a ConfigMap value reference, resolved at BuildRun time | Migrate the ConfigMap | none |
 | `dockerStrategy.buildArgs[].valueFrom.secretKeyRef` | Converted | `spec.paramValues[build-args]` as a Secret value reference | Migrate the Secret | none |
 | `dockerStrategy.dockerfilePath` | Converted | `spec.paramValues[dockerfile]` | Nothing | none |
-| `dockerStrategy.env[]` | Converted | `spec.env[]` | Nothing | none |
+| `dockerStrategy.env[]` | Converted, with a warning. The entries reach the build container, not the Dockerfile | `spec.env[]` | Add `ENV <name>=<value>` after each `FROM` in the Dockerfile. BUILD-2499 tracks passing them through the buildah strategy | OpenShift added the entries as an `ENV` instruction after each `FROM`. buildah does not pass its own environment into `RUN`, so a `RUN` step reads an empty value. [W69](#w69) |
 | `dockerStrategy.forcePull: true` | Converted | `spec.paramValues[pull] = always` | Nothing | none |
 | `dockerStrategy.noCache: true` | Converted | `spec.paramValues[no-cache] = true` | Nothing | none |
 | `dockerStrategy.imageOptimizationPolicy: SkipLayers` or `SkipLayersAndWarn` | Converted | `spec.paramValues[squash] = true` | Nothing | none |
@@ -121,7 +121,7 @@ Either way the BuildConfig itself stays exactly as it was.
 | `sourceStrategy.forcePull: true` | Converted | `spec.paramValues[pull-policy] = always` | Nothing on the Build. See [Strategy parameters](#strategy-parameters) | none |
 | `sourceStrategy.from` | Converted. The reference is resolved through the mapping flags. An empty `kind` is treated as `ImageStreamTag` | `spec.paramValues[builder-image]` | See [Image references](#image-references) | No mapping flag covered the reference, or a bare name relied on ImageStream lookup. [W11](#w11) or [W20](#w20) when it cannot be resolved |
 | `sourceStrategy.volumes[]` | Converted, with a warning | `spec.volumes[]` | See [Strategy volumes](#strategy-volumes) | Volumes convert, but the strategy has to declare them. [W22](#w22) to [W26](#w26) |
-| `sourceStrategy.env[]` | Converted | `spec.env[]` | Nothing | none |
+| `sourceStrategy.env[]` | Converted, with a warning. The entries reach the step containers, not s2i | `spec.env[]` | Set each entry as `NAME=VALUE` in `spec.paramValues[build-env]`, which the source-to-image strategy takes from Builds 1.9. BUILD-2500 tracks doing this in the plugin | The strategy passes `build-env` to `s2i build -e` and ignores `spec.env`, so the assemble script and the output image do not see the values. [W70](#w70) |
 
 ### Strategy parameters
 
@@ -426,3 +426,5 @@ backticks, because a backtick-quoted string in a row is read as a live warning t
 | <a id="w66" name="w66"></a>W66 | `error parsing optional fields: …`, `error marshaling BuildConfig to JSON: …` or `error decoding BuildConfig: …` (the plugin returns this error and crane aborts the transform; nothing is recorded on the BuildConfig) |
 | <a id="w67" name="w67"></a>W67 | `BuildConfig …/… was a binary build: each build used the files sent by oc start-build --from-dir, --from-archive or --from-repo. The new Build gets its files the same way, but through shp: run 'shp build upload … <directory>' for every build. A build started any other way waits … for files and then fails. shp does not send everything oc did: it skips files listed in the directory's .gitignore, such as a target/app.jar you built locally, and symlinks that point outside the directory.` |
 | <a id="w68" name="w68"></a>W68 | `BuildConfig …/… has a binary source with asFile …, so OpenShift placed the file streamed by oc start-build --from-file at that name in the build context. The Build has a Local source instead, which takes a directory: put the file in a directory as … and start each build with 'shp build upload … <directory>'. A BuildRun started any other way waits … for the upload and then fails.` |
+| <a id="w69" name="w69"></a>W69 | `BuildConfig …/… sets dockerStrategy.env …. OpenShift added these as an ENV instruction after each FROM in the Dockerfile, but on Shipwright they only reach the build container, so RUN steps and the output image do not see them. Add ENV <name>=<value> after each FROM in the Dockerfile, or see …` |
+| <a id="w70" name="w70"></a>W70 | `BuildConfig …/… sets sourceStrategy.env …. The source-to-image strategy does not pass spec.env to s2i, so the assemble script and the output image do not see them. Set each one as NAME=VALUE in the Build's build-env parameter, which the strategy accepts from Builds 1.9, or see …` |

@@ -5,6 +5,7 @@ metadata:
     buildconfig-to-shipwright/conversion-outcome: converted-with-warnings
     buildconfig-to-shipwright/inline-dockerfile-configmap: mydockertest-dockerfile
     crane.konveyor.io/conversion-warnings: |-
+      [/mydockertest] BuildConfig /mydockertest sets dockerStrategy.env BUILD_LOGLEVEL. OpenShift added these as an ENV instruction after each FROM in the Dockerfile, but on Shipwright they only reach the build container, so RUN steps and the output image do not see them. Add ENV <name>=<value> after each FROM in the Dockerfile, or see https://redhat.atlassian.net/browse/BUILD-2499
       [/mydockertest] Inline Dockerfile on BuildConfig /mydockertest cannot be consumed by the buildah strategy; its content was preserved in ConfigMap /mydockertest-dockerfile (key Dockerfile). Commit it to the source repository as the Dockerfile, or see https://issues.redhat.com/browse/BUILD-1495, before running the Build.
       [/mydockertest] No source type specified for BuildConfig: mydockertest
       [/mydockertest] Output ImageStreamTag "mydockertest:latest" resolved to fallback URL: image-registry.openshift-image-registry.svc:5000//mydockertest:latest

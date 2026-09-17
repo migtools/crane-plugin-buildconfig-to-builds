@@ -44,7 +44,7 @@ generated. The original BuildConfig is removed from the output. What to look at:
 | `spec.strategy.name: buildah` | the Docker strategy type |
 | `spec.paramValues[runtime-stage-from]` | `dockerStrategy.from`; the strategy replaces the last `FROM` with it |
 | `spec.paramValues[dockerfile]: Dockerfile` | `dockerStrategy.dockerfilePath` |
-| `spec.env` with `artifact_url` and `artifact_name` | `dockerStrategy.env`. See the caveat under "What to do next" |
+| `spec.env` with `artifact_url` and `artifact_name` | `dockerStrategy.env`. `RUN` does not see them; see the first warning and step 3 |
 | `spec.output.image: registry.example.internal/binary-app:1.2.2` | `output.to`, unchanged |
 | `spec.retention.succeededLimit: 2`, `failedLimit: 2` | the two history limits |
 | annotation `conversion-outcome: converted-with-warnings` | the warnings below say what needs you |
@@ -58,6 +58,7 @@ The same text is in the `conversion-warnings` annotation and in the plugin log.
 
 | Warning | Meaning |
 |---|---|
+| `sets dockerStrategy.env artifact_url, artifact_name …` | the values reach the buildah container but not the Dockerfile's `RUN curl`, which downloads from an empty URL. Step 3 fixes it |
 | `was a binary build … run 'shp build upload binary-app <directory>' for every build … shp does not send everything oc did` | a Local source waits for an upload. A BuildRun created any other way waits 10 minutes and fails. `shp` also skips what `.gitignore` lists and symlinks that point outside the directory, so check that `app.jar` is not ignored. [What `shp build upload` leaves out](../../known-limitations.md#what-shp-build-upload-leaves-out) has the full list |
 | `mounts ConfigMap 'cluster-ca-certs' to 'certs' during build …` | the file no longer reaches the build. The strategy has to declare a volume for it |
 | `mounts secret 'nexus' to 'nexusSecret' during build …` | same, for the Secret |
@@ -76,11 +77,12 @@ The same text is in the `conversion-warnings` annotation and in the plugin log.
    `registry.example.internal` in the namespace and set `spec.output.pushSecret` to its
    name, or link it to the `pipeline` ServiceAccount the BuildRun runs as.
 
-3. Check the env caveat. OpenShift inserted `dockerStrategy.env` as an `ENV` instruction
+3. Get the env values into the Dockerfile. OpenShift inserted `dockerStrategy.env` as an `ENV` instruction
    right after `FROM`, so `RUN curl "$artifact_url"` worked. Shipwright's `spec.env` only
-   reaches the buildah step, and `RUN` sees an empty value. Until BUILD-2476 lands, declare
-   `ARG artifact_url` and `ARG artifact_name` in the Dockerfile and pass the values as
-   build args on the Build:
+   reaches the buildah step, and `RUN` sees an empty value. Until BUILD-2499 lands, either
+   add `ENV artifact_url=…` and `ENV artifact_name=…` after `FROM`, as the warning says, or
+   keep the values out of the Dockerfile: declare `ARG artifact_url` and `ARG artifact_name`
+   and pass the values as build args on the Build. The run below used build args:
 
    ```yaml
    spec:

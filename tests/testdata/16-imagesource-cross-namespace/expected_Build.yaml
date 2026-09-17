@@ -6,6 +6,7 @@ metadata:
     buildconfig-to-shipwright/inline-dockerfile-configmap: inputimage-dockerfile
     crane.konveyor.io/conversion-warnings: |-
       [/inputimage] ImageStream reference "ruby:3.3-ubi8" in namespace "openshift" could not be resolved — no --imagestream-mapping provided. Using fallback: image-registry.openshift-image-registry.svc:5000/openshift/ruby:3.3-ubi8. Provide --imagestream-mapping to set the correct image reference.
+      [/inputimage] BuildConfig /inputimage sets dockerStrategy.env BUILD_LOGLEVEL. OpenShift added these as an ENV instruction after each FROM in the Dockerfile, but on Shipwright they only reach the build container, so RUN steps and the output image do not see them. Add ENV <name>=<value> after each FROM in the Dockerfile, or see https://redhat.atlassian.net/browse/BUILD-2499
       [/inputimage] Inline Dockerfile on BuildConfig /inputimage cannot be consumed by the buildah strategy; its content was preserved in ConfigMap /inputimage-dockerfile (key Dockerfile). Commit it to the source repository as the Dockerfile, or see https://issues.redhat.com/browse/BUILD-1495, before running the Build.
       [/inputimage] No source type specified for BuildConfig: inputimage
       [/inputimage] Output ImageStreamTag "inputimage:latest" resolved to fallback URL: image-registry.openshift-image-registry.svc:5000//inputimage:latest
