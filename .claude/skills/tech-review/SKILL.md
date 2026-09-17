@@ -205,8 +205,20 @@ done
 Record both results. They go in the compliance report whether present or not.
 
 `qodo` also needs `agent.toml` — the command definition the reviewer runs, untracked in
-the checkout. Probe for it next to the checkout root and record it the same way; without
-it the qodo reviewer reports `unavailable` rather than falling back to a free-form prompt.
+the checkout. Probe the path `reviewers/cli-review.md` will pass to `--agent-file`. That
+reviewer looks in the review worktree first, but Stage 0f creates that worktree fresh and
+an untracked file is never in it, so the file it actually uses is the one beside the
+repo's common git directory:
+
+```bash
+COMMON="$(git rev-parse --git-common-dir)"
+case "$COMMON" in /*) ;; *) COMMON="$PWD/$COMMON" ;; esac
+AGENT_FILE="$(cd "$(dirname "$COMMON")" && pwd)/agent.toml"
+[ -f "$AGENT_FILE" ] && echo "agent.toml: $AGENT_FILE" || echo "agent.toml: absent"
+```
+
+Record the path. Without it the qodo reviewer reports `unavailable` rather than
+falling back to a free-form prompt.
 
 ### 0e. Find the design doc
 

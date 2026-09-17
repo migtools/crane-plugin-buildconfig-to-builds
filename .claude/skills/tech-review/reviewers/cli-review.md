@@ -66,10 +66,13 @@ no change anywhere else.
 
    `-q` prints the result and nothing else, but the result still arrives behind a
    screen-clear escape sequence, so `sed` from the first line that starts with `{` is
-   what turns it into parseable JSON. Read `$SCRATCH/qodo.json`, check it parses and
-   that `status` and `source` are set, and only then treat it as your output. If it does
-   not parse, re-run without `-q` and read the error: `-q` suppresses failures too, so a
-   silent empty file is a failed run, never a clean one.
+   what turns it into parseable JSON. Read `$SCRATCH/qodo.json` and check it against
+   `findings-schema.md`: it parses, `source` is `qodo`, `status` is one of the four
+   values, `reason` is set unless `status` is `ok`, and `findings` is an array. Only then
+   treat it as your output. If it does not parse, re-run without `-q` and read the error:
+   `-q` suppresses failures too, so a silent empty file is a failed run, never a clean
+   one. If it still fails the check, overwrite the file with `source: qodo`,
+   `status: failed`, a `reason` naming what was wrong, and an empty `findings` array.
 
    Three things that command buys over the free-form prompt it replaces.
 
