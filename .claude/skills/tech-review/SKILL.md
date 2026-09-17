@@ -204,6 +204,22 @@ done
 
 Record both results. They go in the compliance report whether present or not.
 
+`qodo` also needs `agent.toml` — the command definition the reviewer runs, untracked in
+the checkout. Probe the path `reviewers/cli-review.md` will pass to `--agent-file`. That
+reviewer looks in the review worktree first, but Stage 0f creates that worktree fresh and
+an untracked file is never in it, so the file it actually uses is the one beside the
+repo's common git directory:
+
+```bash
+COMMON="$(git rev-parse --git-common-dir)"
+case "$COMMON" in /*) ;; *) COMMON="$PWD/$COMMON" ;; esac
+AGENT_FILE="$(cd "$(dirname "$COMMON")" && pwd)/agent.toml"
+[ -f "$AGENT_FILE" ] && echo "agent.toml: $AGENT_FILE" || echo "agent.toml: absent"
+```
+
+Record the path. Without it the qodo reviewer reports `unavailable` rather than
+falling back to a free-form prompt.
+
 ### 0e. Find the design doc
 
 ```bash
@@ -331,7 +347,7 @@ that skill's report mode. Nothing runs on the session model. Security depth is
 | Reviewer | How to run | Prompt / instructions | Model | When |
 |---|---|---|---|---|
 | `cli-review` (coderabbit) | **sub-agent** | `reviewers/cli-review.md` | sonnet | `coderabbit` on PATH and not excluded by `--cli` |
-| `cli-review` (qodo) | **sub-agent** | `reviewers/cli-review.md` | sonnet | `qodo` on PATH and not excluded by `--cli` |
+| `cli-review` (qodo) | **sub-agent** | `reviewers/cli-review.md` | sonnet | `qodo` on PATH, `agent.toml` present, and not excluded by `--cli` |
 | `code-review` | **sub-agent** that forks the built-in `/code-review "$BRANCH" low` | `reviewers/code-review.md` | opus | Always |
 | `tech-document` | **sub-agent** | the body of `.claude/skills/tech-document/SKILL.md`, with the argument line `<branch> --report --work "$WT"` | opus | Always |
 
