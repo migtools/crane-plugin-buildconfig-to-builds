@@ -66,6 +66,10 @@ const (
 
 	ConfigMapsRFE = "https://issues.redhat.com/browse/BUILD-1745"
 	SecretsRFE    = "https://issues.redhat.com/browse/BUILD-1744"
+	// DockerEnvRFE and SourceEnvRFE track passing strategy env to the build
+	// itself; until they land, the env only reaches the step containers.
+	DockerEnvRFE = "https://redhat.atlassian.net/browse/BUILD-2499"
+	SourceEnvRFE = "https://redhat.atlassian.net/browse/BUILD-2500"
 	// VolumeMigrationDoc is the runbook for making converted Build volumes
 	// pass Shipwright validation (repo-relative; upstream URL not assumed).
 	VolumeMigrationDoc = "docs/volume-migration.md in the crane-plugin-buildconfig-to-shipwright repository"
@@ -311,6 +315,16 @@ func metadataKeyMatches(key string, prefixes, keys []string) bool {
 // ${SECRET_VALUE} would be substituted a second time at BuildRun resolution,
 // relocating secret material into the arg-name position — and can never match
 // a Dockerfile ARG, so such args are skipped with a warning.
+// envNames lists the variable names for a warning, never the values, which
+// can be Secret material.
+func envNames(env []corev1.EnvVar) string {
+	names := make([]string, 0, len(env))
+	for _, e := range env {
+		names = append(names, e.Name)
+	}
+	return strings.Join(names, ", ")
+}
+
 func validBuildArgName(name string) bool {
 	if name == "" {
 		return false
@@ -414,9 +428,15 @@ func (c *Converter) processDockerStrategy(bc *buildv1.BuildConfig, b *shipwright
 		})
 	}
 
-	// Env
+	// Env. OpenShift inserted these as an ENV instruction after every FROM;
+	// spec.env only sets the step container's environment, which buildah does
+	// not pass into RUN.
 	if ds.Env != nil {
 		b.Spec.Env = append(b.Spec.Env, ds.Env...)
+	}
+	if len(ds.Env) > 0 {
+		c.warnf("BuildConfig %s/%s sets dockerStrategy.env %s. OpenShift added these as an ENV instruction after each FROM in the Dockerfile, but on Shipwright they only reach the build container, so RUN steps and the output image do not see them. Add ENV <name>=<value> after each FROM in the Dockerfile, or see %s",
+			bc.Namespace, bc.Name, envNames(ds.Env), DockerEnvRFE)
 	}
 
 	// ForcePull
@@ -570,9 +590,14 @@ func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwright
 		})
 	}
 
-	// Env
+	// Env. The source-to-image strategy passes its build-env parameter to s2i,
+	// not spec.env (BUILD-1181).
 	if ss.Env != nil {
 		b.Spec.Env = append(b.Spec.Env, ss.Env...)
+	}
+	if len(ss.Env) > 0 {
+		c.warnf("BuildConfig %s/%s sets sourceStrategy.env %s. The source-to-image strategy does not pass spec.env to s2i, so the assemble script and the output image do not see them. Set each one as NAME=VALUE in the Build's build-env parameter, which the strategy accepts from Builds 1.9, or see %s",
+			bc.Namespace, bc.Name, envNames(ss.Env), SourceEnvRFE)
 	}
 
 	// Scripts → scripts-url param
