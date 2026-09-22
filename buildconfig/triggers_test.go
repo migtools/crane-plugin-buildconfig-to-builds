@@ -231,6 +231,34 @@ func TestProcessTriggersConfigChange(t *testing.T) {
 	})
 }
 
+// TestConfigChangeSeesTheTemplateThroughConvert is the subtest above run the
+// way crane runs it. Both subtests call processTriggers directly, so they
+// passed while Convert ran the trigger step before the step that writes the
+// annotation and the template branch could never be taken: fixture 18's golden
+// carried a template and a "create a BuildRun manually" warning at the same
+// time. Convert now runs processResources first (PR #87 review, M1), and this
+// test fails if it is moved back.
+func TestConfigChangeSeesTheTemplateThroughConvert(t *testing.T) {
+	b, _, warns := convertOutputSpec(t, `{
+		"runPolicy": "Parallel",
+		"source": {"type": "Git", "git": {"uri": "https://github.com/example/app.git"}},
+		"strategy": {"type": "Docker", "dockerStrategy": {}},
+		"serviceAccount": "custom-builder-sa",
+		"triggers": [{"type": "ConfigChange"}],
+		"output": {"to": {"kind": "DockerImage", "name": "quay.io/example/app:latest"}, "pushSecret": {"name": "push"}}
+	}`, PluginOptionalFields{})
+
+	if b.Annotations[BuildRunTemplateAnnotation] == "" {
+		t.Fatalf("expected a BuildRun template on the Build, got annotations %v", b.Annotations)
+	}
+	if n := countContaining(warns, "apply it once after review"); n != 1 {
+		t.Errorf("ConfigChange warnings pointing at the template = %d, want 1 (%v)", n, warns)
+	}
+	if n := countContaining(warns, "create a BuildRun manually once"); n != 0 {
+		t.Errorf("ConfigChange warning still tells the operator to write a BuildRun the Build already carries (%v)", warns)
+	}
+}
+
 func TestProcessTriggersUnknownType(t *testing.T) {
 	c, hook := newTriggerTestConverter()
 	bc := triggerTestBC(buildv1.BuildTriggerPolicy{Type: buildv1.BuildTriggerType("Bogus")})

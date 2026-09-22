@@ -201,15 +201,19 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 	// come across. crane-lib's KubernetesPlugin clears every account's secrets
 	// list, so a secret linked with --for=mount is gone (BUILD-2343), and the
 	// builder, deployer and default accounts are dropped under strip-default-rbac
-	// (crane-plugin-openshift for the first two, crane-lib's KubernetesPlugin for
-	// default). The plugin cannot see the account, so it cannot tell which case
-	// applies; the warning names what to check. Step 17 writes the name into the
-	// BuildRun template either way.
+	// (crane-plugin-openshift for builder and deployer, crane-lib's
+	// KubernetesPlugin for default). Which of those two runs is the operator's
+	// choice: crane transform runs every installed plugin only when no stages
+	// are named on the command line (crane cmd/transform/transform.go), and the
+	// README names two, KubernetesPlugin and this one, so crane-plugin-openshift
+	// is usually not in the run. The plugin cannot see the account or the stage
+	// list, so both warnings say what to check rather than what happened. Step
+	// 15 writes the name into the BuildRun template either way.
 	if sa := bc.Spec.ServiceAccount; isCraneDefaultRBACAccount(sa) {
-		c.warnf("BuildConfig %s/%s names ServiceAccount %q, which the migration does not carry over: crane-lib drops default under strip-default-rbac, and crane-plugin-openshift drops builder and deployer when it is in the plugin directory. The BuildRun template names it anyway. On the target, point the BuildRun at the pipeline account, which already holds the pipelines-scc grant. Do not grant that SCC to the namespace's default account: every pod that names no account runs as it.",
-			bc.Namespace, bc.Name, sa)
+		c.warnf("BuildConfig %s/%s names ServiceAccount %q, which the migration may not carry over: crane-lib's KubernetesPlugin drops default under strip-default-rbac, and crane-plugin-openshift drops builder and deployer, but only when it runs, which it does when it is one of the stages named on crane transform or when no stages are named at all. The BuildRun template names %q anyway, so check the target before the first BuildRun: oc -n %s get serviceaccount %s. If the account is there, leave the BuildRun on it, confirm it holds the SCC the build strategy needs, and link to it any pull secret the other warnings on this Build name. If it is not, create an account for this build, link those secrets to that one, grant it the SCC scoped to itself with oc adm policy add-scc-to-user pipelines-scc -z <sa> -n %s, and name it on the BuildRun; the namespace pipeline account already holds the grant and is the shorter path, but it is a shared identity every other Tekton workload in the namespace runs as. Either way, do not grant that SCC to the namespace's default account: every pod that names no account runs as it.",
+			bc.Namespace, bc.Name, sa, sa, bc.Namespace, sa, bc.Namespace)
 	} else if sa != "" {
-		c.warnf("crane migrates ServiceAccount %q named by BuildConfig %s/%s, with its RoleBindings and any ClusterRoleBinding, ClusterRole or SCC that names it, if the account was in the export. It does not carry the account's secrets list: re-link any secret that was linked with --for=mount, apply the exported _cluster resources (no --skip-cluster-scoped), and confirm the account holds the SCC the build strategy needs before running the BuildRun.",
+		c.warnf("crane migrates ServiceAccount %q named by BuildConfig %s/%s, with its RoleBindings and any ClusterRoleBinding, ClusterRole or SCC that names it, if the account was in the export. It does not carry the account's secrets list: re-link any secret that was linked with --for=mount. Read the exported _cluster resources before applying them (no --skip-cluster-scoped), and check each name against the target: an SCC or ClusterRole is cluster-global, and an exported SCC carries the source cluster's own users and groups, so one that shares a name with an SCC on the target replaces it. Confirm the account holds the SCC the build strategy needs before running the BuildRun.",
 			sa, bc.Namespace, bc.Name)
 	}
 
@@ -233,12 +237,17 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 	c.processPostCommit(bc)
 	c.processBuildsHistoryLimits(bc, b)
 	c.addRegistries(b)
-	c.processTriggers(bc, b)
-	c.processChainCandidates(bc)
-
+	// Resources runs before triggers, not after: the ConfigChange warning in
+	// processTriggers reads the BuildRun-template annotation to decide whether
+	// to point at the template or tell the operator to write a BuildRun by
+	// hand, and while this ran last that branch could never be taken
+	// (BUILD-2402). processChainCandidates reads the BuildConfig only, so it
+	// stays behind processTriggers, which owns the run-order sentence.
 	if err := c.processResources(bc, b, generatedSA); err != nil {
 		return nil, outcomeFailed(err.Error())
 	}
+	c.processTriggers(bc, b)
+	c.processChainCandidates(bc)
 
 	// Classify the outcome now that every field has been processed, and record
 	// it on the Build so the disposition is observable in the output (BUILD-2318).
@@ -1302,6 +1311,13 @@ func (c *Converter) processResources(bc *buildv1.BuildConfig, b *shipwrightv1bet
 	// stepResources are omitted and the user is told to fill them in. Without
 	// resources there is nothing to put in stepResources, so the names do not
 	// matter and no warning about them is due.
+	//
+	// The switch has no default arm on purpose. Any other strategy type leaves
+	// stepNames empty and falls through to the same treatment as a strategy
+	// override: the template is written, it carries the account and no
+	// stepResources, and the step-names warning asks for them. Returning early
+	// here instead would be a second exit from the one gate above (ADR-0012)
+	// and would drop the account name with it.
 	var stepNames []string
 	if hasResources {
 		switch bc.Spec.Strategy.Type {
@@ -1313,8 +1329,6 @@ func (c *Converter) processResources(bc *buildv1.BuildConfig, b *shipwrightv1bet
 			if b.Spec.Strategy.Name == defaultS2IStrategy {
 				stepNames = []string{"s2i-generate", "buildah"}
 			}
-		default:
-			return nil
 		}
 	}
 
@@ -1368,19 +1382,30 @@ func (c *Converter) processResources(bc *buildv1.BuildConfig, b *shipwrightv1bet
 			*spec.ServiceAccount, BuildRunTemplateAnnotation, bc.Namespace, bc.Name)
 	}
 
-	if !hasResources {
+	// A Local source starts only through `shp build upload`, which creates its
+	// own BuildRun, so the template cannot start this Build whatever it holds
+	// (BUILD-2477, upstream shipwright-io/cli#415). This sits above the
+	// no-resources return below because the template now exists for an account
+	// alone, and an account the operator cannot pass is the worse of the two
+	// losses: `shp build upload` takes one with --sa-name and takes nothing at
+	// all for step resources (shp v0.20.0). Each sentence is added only when it
+	// applies, so a binary build without resources says nothing about them.
+	if b.Spec.Source != nil && b.Spec.Source.Type == shipwrightv1beta1.LocalType {
+		msg := fmt.Sprintf("The Build for BuildConfig %s/%s has a Local source, which starts only through 'shp build upload %s <directory>'. That command creates its own BuildRun, so the BuildRun template in annotation %s cannot start this Build.",
+			bc.Namespace, bc.Name, b.Name, BuildRunTemplateAnnotation)
+		if saName != "" {
+			msg += fmt.Sprintf(" Pass the account the template names on the upload instead: shp build upload %s <directory> --sa-name %s. An upload that names no account runs as the namespace pipeline account, and a pull secret carried by %s is not used.",
+				b.Name, saName, saName)
+		}
+		if hasResources {
+			msg += fmt.Sprintf(" shp build upload has no flag for step resources, so each build runs with the strategy's default step resources. The resources set on the BuildConfig (%s) are recorded here, and in the template only when the strategy's step names are known.",
+				resourceSummary(res))
+		}
+		c.warnf("%s", msg)
 		return nil
 	}
 
-	// A Local source starts only through `shp build upload`, which creates its
-	// own BuildRun and has no input for step resources (shp v0.20.0), so the
-	// template cannot start this Build. Say what the build runs with instead
-	// of pointing at the template (BUILD-2477, upstream shipwright-io/cli#415).
-	// The warning carries the values itself: under a custom strategy mapping
-	// stepNames is empty, so the template holds no stepResources either.
-	if b.Spec.Source != nil && b.Spec.Source.Type == shipwrightv1beta1.LocalType {
-		c.warnf("BuildConfig %s/%s sets resources (%s), but the Build has a Local source, which starts only through 'shp build upload %s <directory>'. shp build upload creates its own BuildRun and has no flag for step resources, so each build runs with the strategy's default step resources. The BuildRun template in annotation %s cannot start this Build, and it carries stepResources only when the strategy's step names are known, so the values above are the record.",
-			bc.Namespace, bc.Name, resourceSummary(res), b.Name, BuildRunTemplateAnnotation)
+	if !hasResources {
 		return nil
 	}
 

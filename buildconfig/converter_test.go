@@ -4184,14 +4184,27 @@ func TestServiceAccountBuilderAndDeployerWarnedSeparately(t *testing.T) {
 				"serviceAccount": name,
 			}))
 
-			dropped := logMessages(hook, logrus.WarnLevel, "the migration does not carry over")
+			dropped := logMessages(hook, logrus.WarnLevel, "the migration may not carry over")
 			if len(dropped) != 1 {
 				t.Fatalf("expected exactly 1 dropped-account warning, got %d: %v", len(dropped), dropped)
 			}
-			for _, want := range []string{`"` + name + `"`, "myns/myapp", "pipeline account", "pipelines-scc"} {
+			// The wants past the account name are the PR #87 review: the
+			// warning has to say the account may not have come across and how
+			// to find out (crane runs crane-plugin-openshift only when it is a
+			// named stage, so being installed decides nothing), and it has to
+			// offer the scoped grant next to the shared pipeline account.
+			for _, want := range []string{
+				`"` + name + `"`, "myns/myapp",
+				"oc -n myns get serviceaccount " + name,
+				"add-scc-to-user pipelines-scc -z <sa> -n myns",
+				"pipeline account", "shared identity",
+			} {
 				if !strings.Contains(dropped[0], want) {
 					t.Errorf("warning missing %q: %s", want, dropped[0])
 				}
+			}
+			if strings.Contains(dropped[0], "plugin directory") {
+				t.Errorf("warning still ties the drop to the plugin directory rather than the stages crane runs: %s", dropped[0])
 			}
 			if migrated := logMessages(hook, logrus.WarnLevel, "crane migrates ServiceAccount"); len(migrated) != 0 {
 				t.Errorf("expected no migrated-account warning for %s, got: %v", name, migrated)
@@ -4371,10 +4384,48 @@ func TestDroppedServiceAccountWithPullSecretWarnsTwiceWithoutContradiction(t *te
 	if !strings.Contains(link[0], "oc -n myns secrets link builder my-pull-secret --for=pull,mount") {
 		t.Errorf("W8 lost its command tail: %s", link[0])
 	}
-	if dropped := logMessages(hook, logrus.WarnLevel, "the migration does not carry over"); len(dropped) != 1 {
-		t.Errorf("expected exactly 1 dropped-account warning, got %d: %v", len(dropped), dropped)
+	dropped := logMessages(hook, logrus.WarnLevel, "the migration may not carry over")
+	if len(dropped) != 1 {
+		t.Fatalf("expected exactly 1 dropped-account warning, got %d: %v", len(dropped), dropped)
 	}
 	if migrated := logMessages(hook, logrus.WarnLevel, "crane migrates ServiceAccount"); len(migrated) != 0 {
 		t.Errorf("expected no migrated-account warning for builder, got: %v", migrated)
 	}
+
+	// The two must land on one account. W8 links the pull secret to the account
+	// the BuildConfig named, which is the account the template names, so W72
+	// has to keep the BuildRun there rather than send it to pipeline: a
+	// BuildRun running as pipeline would not hold the secret W8 just linked
+	// (PR #87 review). W72 may still name pipeline as a fallback, but only
+	// after the check, and when it does it says to link the same secrets there.
+	account := linkedAccount(t, link[0])
+	if account != "builder" {
+		t.Fatalf("W8 links the secret to %q, want builder", account)
+	}
+	if !strings.Contains(dropped[0], "oc -n myns get serviceaccount "+account) {
+		t.Errorf("W72 does not send the operator to the account W8 links the secret to (%s): %s", account, dropped[0])
+	}
+	if !strings.Contains(dropped[0], "If the account is there, leave the BuildRun on it") {
+		t.Errorf("W72 redirects the BuildRun away from %s without checking for it first: %s", account, dropped[0])
+	}
+	if !strings.Contains(dropped[0], "link those secrets to that one") {
+		t.Errorf("W72 offers another account without carrying the pull secret over: %s", dropped[0])
+	}
+}
+
+// linkedAccount returns the ServiceAccount named in W8's
+// "oc -n <ns> secrets link <account> <secret> --for=pull,mount" tail, so a
+// test can compare it with the account another warning names instead of
+// hard-coding the same string twice.
+func linkedAccount(t *testing.T, warning string) string {
+	t.Helper()
+	_, tail, found := strings.Cut(warning, "secrets link ")
+	if !found {
+		t.Fatalf("warning has no secrets link command: %s", warning)
+	}
+	account, _, found := strings.Cut(tail, " ")
+	if !found || account == "" {
+		t.Fatalf("secrets link command names no account: %s", warning)
+	}
+	return account
 }
