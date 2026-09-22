@@ -849,11 +849,11 @@ func (c *Converter) processMountTrustedCA(bc *buildv1.BuildConfig, b *shipwright
 		}
 	}
 	if declared {
-		c.Log.Warnf("BuildConfig %s sets mountTrustedCA but already declares a strategy volume named %q — deferring to the explicit volume and skipping the trusted CA mapping (if the explicit volume was itself skipped as unsupported, migrate its CA source manually)", bc.Name, TrustedCAVolumeName)
+		c.warnf("BuildConfig %s sets mountTrustedCA but already declares a strategy volume named %q — deferring to the explicit volume and skipping the trusted CA mapping (if the explicit volume was itself skipped as unsupported, migrate its CA source manually)", bc.Name, TrustedCAVolumeName)
 		return nil
 	}
 
-	cmName := c.uniqueName("ConfigMap", bc.Namespace, b.Name+TrustedCABundleConfigMapSuffix)
+	cmName := c.uniqueName("ConfigMap", bc.Name+TrustedCABundleConfigMapSuffix)
 
 	b.Spec.Volumes = append(b.Spec.Volumes, shipwrightv1beta1.BuildVolume{
 		Name: TrustedCAVolumeName,
@@ -869,10 +869,10 @@ func (c *Converter) processMountTrustedCA(bc *buildv1.BuildConfig, b *shipwright
 		},
 	})
 
-	c.Log.Warnf("mountTrustedCA for BuildConfig %s relies on the OpenShift Cluster Network Operator injecting the cluster CA bundle into ConfigMap %q (label %s); on clusters without that injector the %s key stays absent and BuildRun pods will fail to mount the %q volume until the key is populated manually", bc.Name, cmName, InjectTrustedCABundleLabel, TrustedCABundleKey, TrustedCAVolumeName)
+	c.warnf("mountTrustedCA for BuildConfig %s relies on the OpenShift Cluster Network Operator injecting the cluster CA bundle into ConfigMap %q (label %s); on clusters without that injector the %s key stays absent and BuildRun pods will fail to mount the %q volume until the key is populated manually", bc.Name, cmName, InjectTrustedCABundleLabel, TrustedCABundleKey, TrustedCAVolumeName)
 
 	if name := b.Spec.Strategy.Name; name != defaultDockerStrategy && name != defaultS2IStrategy {
-		c.Log.Warnf("mountTrustedCA was mapped to the %q volume for BuildConfig %s, but the target ClusterBuildStrategy %q is not a shipped strategy — Shipwright will reject the Build (Registered=False, reason UndefinedVolume) unless the strategy declares a matching overridable volume: volumes: [{name: %s, overridable: true, emptyDir: {}}] plus a volumeMount on the build step", TrustedCAVolumeName, bc.Name, name, TrustedCAVolumeName)
+		c.warnf("mountTrustedCA was mapped to the %q volume for BuildConfig %s, but the target ClusterBuildStrategy %q is not a shipped strategy — Shipwright will reject the Build (Registered=False, reason UndefinedVolume) unless the strategy declares a matching overridable volume: volumes: [{name: %s, overridable: true, emptyDir: {}}] plus a volumeMount on the build step", TrustedCAVolumeName, bc.Name, name, TrustedCAVolumeName)
 	}
 
 	return &corev1.ConfigMap{

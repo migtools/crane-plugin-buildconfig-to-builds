@@ -1,3 +1,5 @@
+//go:build !documentation
+
 package buildconfig
 
 import (
@@ -193,9 +195,9 @@ func TestConvertMountTrustedCACustomStrategyWarning(t *testing.T) {
 		Log:  logger,
 		Opts: PluginOptionalFields{StrategyMapping: map[string]string{"docker": "my-custom-strategy"}},
 	}
-	result, err := c.Convert(bc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	result, outcome := c.Convert(bc)
+	if outcome.State == OutcomeFailed {
+		t.Fatalf("unexpected conversion failure: %s", outcome.Reason)
 	}
 	if len(result) < 2 {
 		t.Fatalf("expected Build and ConfigMap, got %+v", result)
@@ -347,13 +349,13 @@ func TestConvertMountTrustedCAPerBuildConfigMaps(t *testing.T) {
 		return false
 	}
 
-	first, err := c.Convert(newBC("app-one"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	first, outcome := c.Convert(newBC("app-one"))
+	if outcome.State == OutcomeFailed {
+		t.Fatalf("unexpected conversion failure: %s", outcome.Reason)
 	}
-	second, err := c.Convert(newBC("app-two"))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	second, outcome := c.Convert(newBC("app-two"))
+	if outcome.State == OutcomeFailed {
+		t.Fatalf("unexpected conversion failure: %s", outcome.Reason)
 	}
 
 	// Each conversion owns its own ConfigMap, named after its Build.

@@ -24,8 +24,6 @@ Six things to know before you run the migration.
 5. **Files from `source.secrets` and `source.configMaps` do not reach the build.** The
    strategy has to declare the volume first. [volume-migration.md](volume-migration.md) has
    the steps.
-6. **The trusted CA bundle is dropped, with no warning.** A fix is in review, see
-   [Planned](#planned).
 
 ## Not supported
 
@@ -97,7 +95,6 @@ Work with a story on the board. Nothing here has a release date.
 
 | BuildConfig feature | What happens today | Planned change | Tracking |
 |---|---|---|---|
-| `mountTrustedCA` | dropped, no warning | A `trusted-ca` volume on the Build and a ConfigMap the cluster fills with the CA bundle | BUILD-2265, [PR #23](https://github.com/migtools/crane-plugin-buildconfig-to-builds/pull/23) in review |
 | `dockerStrategy.env` | copied to `spec.env`, which `RUN` does not see. Warned | The buildah strategy takes an `env` parameter, and the plugin maps the entries to it | BUILD-1491 (strategy), BUILD-2499 (plugin) |
 | `sourceStrategy.env` | copied to `spec.env`, which s2i does not see. Warned | The plugin maps the entries to the strategy's `build-env` parameter | BUILD-2500 |
 | The `secrets` list on a migrated `serviceAccount` | crane carries the account, its RoleBindings and the cluster RBAC that names it, and the plugin names it in the BuildRun template. crane-lib clears the account's `secrets` list, so a secret linked `--for=mount` has to be re-linked by hand | Carry the `secrets` list across, so no re-link is needed | BUILD-2343 |
