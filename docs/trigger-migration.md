@@ -34,11 +34,12 @@ Each entry picks a section below. `secretReference.name` is the Secret the webho
 points at. crane export carries that Secret across with the rest of the namespace, so it is
 already on the target under the same name, with its value under the key `WebHookSecretKey`.
 
-The second thing to read is which ServiceAccount the build runs as. When the BuildConfig had
-a pull secret, the plugin generated a ServiceAccount that carries it, named after the
-BuildConfig. A BuildRun that does not name that account runs as the namespace `pipeline`
-account, and a private builder image will not pull. When the BuildConfig also set resources,
-the Build's `buildconfig-to-shipwright/buildrun-template` annotation names the account:
+The second thing to read is which ServiceAccount the build runs as. A BuildRun that names
+no account runs as the namespace `pipeline` account, and a private builder image will not
+pull. The Build's `buildconfig-to-shipwright/buildrun-template` annotation names the
+account whenever there is one to name: the account the BuildConfig named, or the one the
+plugin generated to carry a pull secret. Resources have nothing to do with it; a Build with
+an account and no resources carries the annotation too.
 
 ```bash
 kubectl get build.shipwright.io BUILD -n NAMESPACE \
@@ -46,18 +47,24 @@ kubectl get build.shipwright.io BUILD -n NAMESPACE \
   | grep serviceAccount
 ```
 
-When there is no annotation, look for the account itself:
+No annotation means the BuildConfig named no account and the plugin generated none. Leave
+`serviceAccount` out and the BuildRun runs as `pipeline`.
 
-```bash
-kubectl get serviceaccount -n NAMESPACE
-```
-
-Every recipe below has a `SERVICEACCOUNT` placeholder: the generated account when there is
-one, `pipeline` otherwise. On OpenShift, grant a generated account the SCC buildah needs,
-scoped to that one account:
+Every recipe below has a `SERVICEACCOUNT` placeholder: the account the annotation names when
+there is one, `pipeline` otherwise. On OpenShift, grant a generated account the SCC buildah
+needs, scoped to that one account:
 
 ```bash
 oc adm policy add-scc-to-user pipelines-scc -z SERVICEACCOUNT -n NAMESPACE
+```
+
+A Build with a Local source, which is what a binary BuildConfig becomes, is the one case
+where the template is not the answer: it starts only through `shp build upload`, which
+creates its own BuildRun. Pass the account to the upload instead, or the pull secret on it
+is not used:
+
+```bash
+shp build upload BUILD DIRECTORY --sa-name SERVICEACCOUNT
 ```
 
 ## Webhooks: GitHub, GitLab, Bitbucket, Generic
@@ -585,8 +592,11 @@ On OpenShift a ConfigChange trigger ran the first build when the BuildConfig was
 Creating a Build starts nothing, so run the first build yourself, once.
 
 When the Build carries a `buildconfig-to-shipwright/buildrun-template` annotation, it holds a
-BuildRun with the resources and ServiceAccount the plugin could not put on the Build. Apply
-that one, as in the [lossy Docker example](examples/docker-lossy/README.md):
+BuildRun with the resources, the ServiceAccount, or both, whichever the plugin could not put
+on the Build. Apply that one, as in the
+[lossy Docker example](examples/docker-lossy/README.md). The exception is a Build with a
+Local source: apply nothing, and run the `shp build upload` command from
+[Read the annotation first](#read-the-annotation-first) instead.
 
 ```bash
 kubectl get build.shipwright.io BUILD -n NAMESPACE \
@@ -594,10 +604,11 @@ kubectl get build.shipwright.io BUILD -n NAMESPACE \
   | kubectl create -f -
 ```
 
-Without the annotation, create the BuildRun yourself, naming the account from
-[Read the annotation first](#read-the-annotation-first). A Build whose BuildConfig had a
-pull secret but no resources has a generated account and no annotation, and a BuildRun that
-leaves `serviceAccount` unset there drops the pull secret:
+Without the annotation there is no account to name, so `SERVICEACCOUNT` below is `pipeline`.
+A Build whose BuildConfig had a pull secret but no resources used to land here: it carried a
+generated account and no annotation, and a hand-written BuildRun dropped the pull secret.
+It now carries a template naming that account, so apply the template above instead. This
+recipe is for the Builds that carry no template at all:
 
 ```bash
 kubectl create -n NAMESPACE -f - <<EOF

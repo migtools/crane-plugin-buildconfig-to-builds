@@ -119,8 +119,10 @@ crane export -n myapp
 `--include-gk BuildConfig` is tempting when converting BuildConfigs is all you came for.
 Read the warnings on the Builds it produces before you do. A generated Build can name a
 push secret, a pull secret, a clone secret, a ConfigMap or Secret holding a build argument,
-and a ServiceAccount, and this plugin creates none of them: it copies the names across and
-leaves the resources to crane. Export only the BuildConfigs and those Builds apply to the
+and a ServiceAccount. The plugin creates one of those and one only: when a BuildConfig sets
+a strategy pull secret and names no account, it generates a ServiceAccount carrying that
+secret. crane still has to export the secret itself. Every other name is copied across and
+the resource behind it is left to crane. Export only the BuildConfigs and those Builds apply to the
 target and then fail on the first run, for want of something the export left behind.
 [Issue #72](https://github.com/migtools/crane-plugin-buildconfig-to-builds/issues/72) is
 where the safe allowlist gets settled.
@@ -192,14 +194,18 @@ Nothing builds on its own. OpenShift triggers do not exist in Shipwright, so cre
 [docs/trigger-migration.md](docs/trigger-migration.md): a listener for webhooks, a Pipeline
 or a CronJob for ImageChange.
 
-Which ServiceAccount it runs as depends on whether the plugin generated one. If it did not,
-leave the BuildRun's `serviceAccount` unset and it runs as the namespace `pipeline` account.
-If it did, that account carries the BuildConfig's pull secret, so point the BuildRun at it.
-The plugin names it in the Build's `buildconfig-to-shipwright/buildrun-template` annotation
-when the BuildConfig also set resources; otherwise it is the account named after the
-BuildConfig next to the Build. Leaving it unset drops the pull secret and a private builder
-image will not pull.
-On OpenShift, grant the generated account the SCC buildah needs, scoped to that one account:
+Which ServiceAccount it runs as is in the Build's `buildconfig-to-shipwright/buildrun-template`
+annotation whenever there is one to name: the account the BuildConfig named, or the one the
+plugin generated to carry the pull secret. Point the BuildRun at it. With neither, leave
+`serviceAccount` unset and the BuildRun runs as the namespace `pipeline` account. A named
+account comes across with the rest of the export, with two exceptions. `default` is dropped
+by `KubernetesPlugin`, which the transform above runs. `builder` and `deployer` are dropped
+by `crane-plugin-openshift`, and that plugin runs only when you name it as a stage or name
+no stages at all, so the two-stage command above keeps them. The warning on the Build names
+the account, says which case applies, and tells you to check the target for it. A generated
+account carries only the pull secret; leaving the BuildRun's `serviceAccount` unset drops it
+and a private builder image will not pull. On OpenShift, grant the generated account the SCC
+buildah needs, scoped to that one account:
 
 ```bash
 oc adm policy add-scc-to-user pipelines-scc -z <generated-sa> -n <namespace>
