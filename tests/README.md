@@ -141,6 +141,7 @@ skipped. 27 cases as of this file, in three groups by what the directory holds.
 - ✅ 25-binary-asfile — Docker with a single-file binary source (asFile)
 - ✅ 26-binary-docker-resources — Docker with binary directory source and resources
 - ✅ 27-docker-trusted-ca — Docker with mountTrustedCA
+- ✅ 27-s2i-forbidden-env — S2I with env names Shipwright forbids
 
 **Passthrough with outcome annotations (3 cases).** No Build is generated; the
 BuildConfig comes back with the annotations in `expected_annotations.json`:
