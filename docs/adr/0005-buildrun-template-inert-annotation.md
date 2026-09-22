@@ -39,7 +39,9 @@ are left out of the template with a warning rather than guessed.
   plugin set up is never used.
 - A BuildConfig with a ServiceAccount but no resources got no template and no message until
   ADR-0012 closed that gap.
-- The trigger step reads this annotation before the step that writes it, so the ConfigChange
-  warning never mentions the template. Listed in the architecture page's ordering defects.
+- The trigger step read this annotation before the step that writes it, so the ConfigChange
+  warning never mentioned the template. BUILD-2402 moved the resources step ahead of the
+  trigger step and the branch is now reachable; `TestConfigChangeSeesTheTemplateThroughConvert`
+  fails if the order goes back.
 - The annotation shares the object's size budget with the warnings and the preserved
   triggers.

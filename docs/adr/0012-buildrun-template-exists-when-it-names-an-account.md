@@ -25,9 +25,15 @@ the Build's name. `stepResources`, and the two warnings about them, appear only 
 
 ## Rules
 
-- One gate, in `processResources`: no resources and no account means no template.
+- One gate, in `processResources`: no resources and no account means no template. One gate
+  means one exit: a strategy whose step names are unknown leaves `stepResources` out and
+  keeps the template, rather than returning and dropping the account with it.
 - `stepResources` and the warnings W47 and W48 depend on resources alone. A template that
   carries only an account raises neither.
+- A Local source cannot be started from the template at all, so the Local-source warning
+  (W71) sits above the resources-only checks and fires for an account-only template too.
+  It names the account on `shp build upload --sa-name` and adds the step-resources sentence
+  only when there were resources.
 - The generated account wins when there is one. It is only generated when the BuildConfig
   names none, so the two never compete.
 - A template on every Build is still declined (BUILD-2314). The template exists to carry
@@ -40,7 +46,10 @@ the Build's name. `stepResources`, and the two warnings about them, appear only 
 - A Build for a BuildConfig that names an account but sets no resources carries an
   annotation it did not before. The committed examples are unchanged: the one with an
   account also has resources.
+- Widening the gate made the template reach binary Builds, which cannot use it. That is
+  what put the Local-source rule above into this record, on the PR #87 review.
 - Pinned by `converter_test.go`: `TestServiceAccountTemplateWrittenWithoutResources`,
   `TestGeneratedServiceAccountTemplateWrittenWithoutResources`,
   `TestServiceAccountTemplateCustomStrategyWithoutResources`,
-  `TestConvertResourcesEmptyNoAnnotation`.
+  `TestConvertResourcesEmptyNoAnnotation`; and by `binary_resources_test.go`:
+  `TestConvertBinarySourceWithAccountAndNoResources`.
