@@ -5,11 +5,11 @@ migration. [support-matrix.md](support-matrix.md) has the field-by-field detail,
 row here points into it. Every `W` number links to its entry in the
 [Warning reference](support-matrix.md#warning-reference).
 
-Last checked against `main` on 2026-09-17.
+Last checked against `main` on 2026-09-23.
 
 ## The short list
 
-Six things to know before you run the migration.
+Five things to know before you run the migration.
 
 1. **Custom and JenkinsPipeline builds do not convert.** The plugin skips them and passes the
    BuildConfig through unchanged. Rewrite a Custom build as a ClusterBuildStrategy or a Tekton
@@ -42,7 +42,7 @@ enough of the cluster to do the work. The last column says why, and names the wa
 | Run ordering for chained builds, where one build's output is another's input | both Builds convert, with a warning or an info line on the consumer. Nothing orders the runs | Run the producer's BuildRun to completion, then the consumer's | crane hands the plugin one resource at a time, and Shipwright does not order BuildRuns. [Chained builds](support-matrix.md#chained-builds) |
 | `runPolicy: Serial` (or unset) and `SerialLatestOnly` | dropped. BuildRuns run concurrently | Serialise runs in your pipeline | Shipwright has no build queue. Every BuildRun starts as soon as it is created. [W43](support-matrix.md#w43), [W44](support-matrix.md#w44) |
 | `postCommit` hooks | dropped | Add a test step after the BuildRun in a Tekton Pipeline. It runs after the push, so it cannot block a bad image | OpenShift ran the hook inside the built image before the push. Shipwright has no step between build and push. [W59](support-matrix.md#w59) |
-| `source.secrets[]` and `source.configMaps[]` | dropped | Add an overridable volume to the strategy, a volume override on the Build, and change `ADD` or `COPY` to `RUN cp` in the Dockerfile. See [volume-migration.md](volume-migration.md) | Shipwright mounts files through strategy volumes, and the shipped strategies declare none. [W32](support-matrix.md#w32), [W33](support-matrix.md#w33) |
+| `source.secrets[]` and `source.configMaps[]` | dropped | Add an overridable volume to the strategy, a volume override on the Build, and change `ADD` or `COPY` to `RUN cp` in the Dockerfile. See [volume-migration.md](volume-migration.md) | Shipwright mounts files through strategy volumes, and the shipped strategies declare none under a name of yours. [W32](support-matrix.md#w32), [W33](support-matrix.md#w33) |
 | `source.images[].as` | dropped | No equivalent | The OCI artifact source cannot rename what it unpacks. [W29](support-matrix.md#w29) |
 | `source.images[].paths` | dropped. The whole image becomes the source | Adjust the Dockerfile to the image's layout | The OCI artifact source unpacks the whole image at the context root. It cannot pick paths. [W30](support-matrix.md#w30) |
 | Inline Dockerfile (`source.dockerfile`) on a Docker strategy | converted, with a warning. The Dockerfile is saved to a ConfigMap the Build cannot use | Commit the Dockerfile to the source repository. Point `dockerStrategy.dockerfilePath` at it when it is not at the context root | The buildah strategy reads the Dockerfile from the source checkout. It cannot take one from a ConfigMap, and it will stay that way. [W57](support-matrix.md#w57) |
@@ -65,12 +65,13 @@ The last column says why, and names the warning.
 
 | BuildConfig feature | What the Build needs | Why |
 |---|---|---|
-| Strategy volumes with a Secret or ConfigMap source | The shipped strategies do not declare the volume. Copy the strategy and add it, per [volume-migration.md](volume-migration.md) | Shipwright checks every Build volume against the strategy. A volume the strategy does not declare fails validation with `UndefinedVolume`. [W25](support-matrix.md#w25), [W26](support-matrix.md#w26) |
+| Strategy volumes with a Secret or ConfigMap source | The shipped strategies declare no volume under a name of yours. Copy the strategy and add it, per [volume-migration.md](volume-migration.md) | Shipwright checks every Build volume against the strategy. A volume the strategy does not declare fails validation with `UndefinedVolume`. [W25](support-matrix.md#w25), [W26](support-matrix.md#w26) |
 | `sourceStrategy.incremental: true` | The first BuildRun fails unless the output image already exists on the target. Run it once with `incremental=false`, or push the image by hand | An incremental build starts `FROM` the previous output image to reuse its artifacts. On a fresh target that image is not there yet. [W21](support-matrix.md#w21) |
 | `dockerStrategy.env` | Add `ENV <name>=<value>` after each `FROM` in the Dockerfile | OpenShift wrote the entries into the Dockerfile for you. On Shipwright they only reach the build container, so a `RUN` step that reads one gets an empty value and the build carries on. [W69](support-matrix.md#w69) |
 | `sourceStrategy.env` | Set each entry as `NAME=VALUE` in the Build's `build-env` parameter | The source-to-image strategy passes `build-env` to s2i and ignores `spec.env`, so the assemble script does not see the values. [W70](support-matrix.md#w70) |
 | `resources` (CPU and memory) | Shipwright puts resources on the BuildRun, not the Build. Apply the BuildRun template from the annotation | A Shipwright Build has no field for resource requirements. Only a BuildRun does, so the plugin writes one into an annotation for you to apply. [W48](support-matrix.md#w48) |
 | Output to a registry with no `pushSecret` | A ServiceAccount with push credentials, or `spec.output.pushSecret` on the Build | OpenShift pushed with the builder account's credentials. Shipwright needs them named on the Build, or on the ServiceAccount the BuildRun uses. [W36](support-matrix.md#w36), [W37](support-matrix.md#w37) |
+| `mountTrustedCA: true` | The `ca-bundle.crt` key filled in the generated `<buildconfig>-trusted-ca` ConfigMap, by the Cluster Network Operator on OpenShift or by you anywhere else, and a `trusted-ca` volume the target strategy declares. The shipped `buildah` and `source-to-image` strategies declare it from strategy-catalog commit `cb2432c` onward; an older catalog, or a strategy of your own named through `--default-build-strategy`, needs the overridable volume added | The build asked for the cluster's trust material, so the mount is made to fail visibly rather than let the build run without it. Only the `ca-bundle.crt` key is projected, so nothing else in the ConfigMap can enter the trust store. [W76](support-matrix.md#w76), [W77](support-matrix.md#w77) |
 | A binary source, with or without `asFile` | Start each build with `shp build upload <build> <directory>`. With `asFile`, put the file in that directory under that name. The BuildRun template cannot start a Local-source Build, so what it carries has to go on the upload instead: the account as `--sa-name`, and `spec.resources` nowhere at all, since `shp build upload` has no flag for step resources and each build runs with the strategy's defaults | OpenShift took the input from `oc start-build` at each start. A Shipwright Local source is also a directory upload, but nothing feeds it on its own: a BuildRun started without the upload waits out the timeout and fails. `shp` also sends fewer files than `oc` did; see [What `shp build upload` leaves out](#what-shp-build-upload-leaves-out). [W67](support-matrix.md#w67), [W68](support-matrix.md#w68), [W71](support-matrix.md#w71) |
 
 ### What `shp build upload` leaves out
