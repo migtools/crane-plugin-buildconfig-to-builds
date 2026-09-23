@@ -76,13 +76,15 @@ const (
 
 	// TrustedCAVolumeName is the overridable volume defined by the shipped
 	// buildah and source-to-image ClusterBuildStrategies for CA bundle
-	// injection (strategy-catalog PR #30, BUILD-2324).
+	// injection (strategy-catalog PR #30, BUILD-2342, commit cb2432c). A
+	// catalog older than that commit declares no such volume, which is what
+	// the warning about the minimum catalog version exists to say.
 	TrustedCAVolumeName = "trusted-ca"
-	// TrustedCABundleConfigMapSuffix is appended to the converted Build's
-	// name to form the per-Build CA bundle ConfigMap name — mirroring native
-	// OpenShift builds, which own a CA ConfigMap per build, and avoiding
-	// collisions with (or relabeling of) user resources under a well-known
-	// shared name.
+	// TrustedCABundleConfigMapSuffix is appended to the BuildConfig's name,
+	// as every other generated name is, to form the per-conversion CA bundle
+	// ConfigMap name — mirroring native OpenShift builds, which own a CA
+	// ConfigMap per build, and avoiding collisions with (or relabeling of)
+	// user resources under a well-known shared name.
 	TrustedCABundleConfigMapSuffix = "-trusted-ca"
 	// TrustedCABundleKey is the ConfigMap key the Cluster Network Operator
 	// injects the cluster CA bundle under. The volume projection is restricted
@@ -832,9 +834,11 @@ func bcStrategyVolumes(bc *buildv1.BuildConfig) []buildv1.BuildVolume {
 // ca-bundle.crt key, so the mount fails visibly (rather than silently
 // building without the requested trust) until the injector populates the
 // ConfigMap; on clusters without the Cluster Network Operator the key must
-// be populated manually. The ConfigMap is named <build>-trusted-ca —
-// per-Build, like native OpenShift builds — so it never collides with user
-// resources under a shared well-known name.
+// be populated manually. The ConfigMap is named after the BuildConfig plus
+// -trusted-ca, sanitized, as the inline-Dockerfile ConfigMap and the
+// generated ServiceAccount are — one per conversion, like native OpenShift
+// builds, so it never collides with user resources under a shared well-known
+// name.
 func (c *Converter) processMountTrustedCA(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) *corev1.ConfigMap {
 	if bc.Spec.MountTrustedCA == nil || !*bc.Spec.MountTrustedCA {
 		return nil
@@ -880,7 +884,7 @@ func (c *Converter) processMountTrustedCA(bc *buildv1.BuildConfig, b *shipwright
 		},
 	})
 
-	c.warnf("mountTrustedCA for BuildConfig %s relies on the OpenShift Cluster Network Operator injecting the cluster CA bundle into ConfigMap %q (label %s); on clusters without that injector the %s key stays absent and BuildRun pods will fail to mount the %q volume until the key is populated manually", bc.Name, cmName, InjectTrustedCABundleLabel, TrustedCABundleKey, TrustedCAVolumeName)
+	c.warnf("mountTrustedCA for BuildConfig %s relies on the OpenShift Cluster Network Operator injecting the cluster CA bundle into ConfigMap %q (label %s); on clusters without that injector the %s key stays absent and BuildRun pods will fail to mount the %q volume until the key is populated manually. The volume itself reached the shipped buildah and source-to-image ClusterBuildStrategies in strategy-catalog commit cb2432c, so check the target declares it before you apply: oc get clusterbuildstrategy %s -o jsonpath='{.spec.volumes[*].name}'. A catalog older than cb2432c declares no such volume and Shipwright refuses to register the Build (Registered=False, reason UndefinedVolume), whatever the strategy is called", bc.Name, cmName, InjectTrustedCABundleLabel, TrustedCABundleKey, TrustedCAVolumeName, b.Spec.Strategy.Name)
 
 	if name := b.Spec.Strategy.Name; name != defaultDockerStrategy && name != defaultS2IStrategy {
 		c.warnf("mountTrustedCA was mapped to the %q volume for BuildConfig %s, but the target ClusterBuildStrategy %q is not a shipped strategy — Shipwright will reject the Build (Registered=False, reason UndefinedVolume) unless the strategy declares a matching overridable volume: volumes: [{name: %s, overridable: true, emptyDir: {}}] plus a volumeMount on the build step", TrustedCAVolumeName, bc.Name, name, TrustedCAVolumeName)
