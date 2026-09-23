@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  annotations:
+    crane.konveyor.io/converted-from: build.openshift.io/v1/BuildConfig/webapp-ca
+  labels:
+    config.openshift.io/inject-trusted-cabundle: "true"
+  name: webapp-ca-trusted-ca
+  namespace: myapp
