@@ -2,6 +2,8 @@
 
 Status: accepted. Decided 2026-08-20 (PR #21), reinforced 2026-08-25 (PR #56). Reviewed
 2026-09-02, verified on a cluster.
+Amended 2026-09-23 by ADR-0014 (BUILD-2265): the shipped strategies declare a second
+overridable volume, `trusted-ca`.
 Enhancement proposal: not covered there.
 
 ## Context
@@ -13,6 +15,13 @@ Build fail registration with `UndefinedVolume`. The alternative, generic slot vo
 shipped strategies plus renaming on the plugin side, was rejected because mount paths live
 only in the strategy's steps, so a renamed volume would still not be mounted where the build
 expects it.
+
+Amended 2026-09-23 (BUILD-2265, [ADR-0014](0014-trusted-ca-generated-volume-fails-visibly.md)):
+"exactly one" was true when this was decided and is not any more. strategy-catalog `cb2432c`
+added a second overridable volume to both shipped strategies, `trusted-ca`, and the plugin
+generates a Build volume for it when a BuildConfig sets `spec.mountTrustedCA`. Nothing else
+here moves: a volume the strategy does not declare still fails registration, and a user's own
+volume is still copied under its own name rather than renamed into the new slot.
 
 ## Decision
 
