@@ -51,7 +51,8 @@ func trustedCABuildConfigRequest(strategyType, strategyKey string, mountTrustedC
 }
 
 // The request builder names its BuildConfig trusted-ca-app; the converter
-// derives the per-Build ConfigMap name from the converted Build's name.
+// derives the ConfigMap name from the BuildConfig's name, the same input
+// every other generated name comes from, and sanitizes it.
 const testTrustedCAConfigMapName = "trusted-ca-app" + TrustedCABundleConfigMapSuffix
 
 func findConfigMap(resp transform.PluginResponse, name string) *unstructured.Unstructured {
@@ -94,6 +95,13 @@ func TestConvertMountTrustedCA(t *testing.T) {
 			}
 			if vol.ConfigMap != nil && (len(vol.ConfigMap.Items) != 1 || vol.ConfigMap.Items[0].Key != TrustedCABundleKey || vol.ConfigMap.Items[0].Path != TrustedCABundleKey) {
 				t.Errorf("expected volume projection restricted to %s, got %+v", TrustedCABundleKey, vol.ConfigMap.Items)
+			}
+			// Optional must stay unset. With optional: true the kubelet
+			// mounts an empty directory and the build runs without the
+			// trust it asked for, which is the one outcome this mapping
+			// exists to prevent.
+			if vol.ConfigMap != nil && vol.ConfigMap.Optional != nil {
+				t.Errorf("expected ConfigMap volume source Optional to stay unset so a missing bundle fails the mount, got %v", *vol.ConfigMap.Optional)
 			}
 
 			cm := findConfigMap(resp, testTrustedCAConfigMapName)
@@ -222,7 +230,7 @@ func TestConvertMountTrustedCACustomStrategyWarning(t *testing.T) {
 		t.Fatalf("expected ConfigMap %q among converted resources, got %+v", testTrustedCAConfigMapName, result)
 	}
 
-	// The warning must state the real outcome per the BUILD-2324 fail-visible
+	// The warning must state the real outcome per the BUILD-2342 fail-visible
 	// contract: Shipwright rejects the Build, it does not sit inert.
 	var sawWarning bool
 	for _, entry := range hook.AllEntries() {
@@ -321,6 +329,65 @@ func TestConvertMountTrustedCAUnsupportedSourceCollision(t *testing.T) {
 	}
 	if !sawSkip {
 		t.Error("expected warn-and-skip message for user-declared trusted-ca volume with unsupported source")
+	}
+}
+
+// A BuildConfig may carry both strategy blocks while spec.strategy.type names
+// only one of them. The collision check has to read the block Convert
+// dispatched on: here type Source, a trusted-ca volume on sourceStrategy that
+// processStrategyVolumes drops as unsupported, and a populated dockerStrategy
+// beside it. Reading the Docker list would find no trusted-ca, and the
+// injected cluster bundle would take the name of the CA volume the user
+// declared.
+func TestConvertMountTrustedCAVolumesFollowStrategyType(t *testing.T) {
+	logger, hook := logrustest.NewNullLogger()
+	mount := true
+	bc := &buildv1.BuildConfig{}
+	bc.Name = "trusted-ca-app"
+	bc.Namespace = "myns"
+	bc.Spec.MountTrustedCA = &mount
+	bc.Spec.Strategy = buildv1.BuildStrategy{
+		Type: buildv1.SourceBuildStrategyType,
+		SourceStrategy: &buildv1.SourceBuildStrategy{
+			Volumes: []buildv1.BuildVolume{{
+				Name:   TrustedCAVolumeName,
+				Source: buildv1.BuildVolumeSource{Type: buildv1.BuildVolumeSourceTypeCSI},
+			}},
+		},
+		DockerStrategy: &buildv1.DockerBuildStrategy{},
+	}
+	bc.Spec.Output.To = &corev1.ObjectReference{Kind: "DockerImage", Name: "quay.io/example/myapp:latest"}
+
+	c := &Converter{Log: logger}
+	result, outcome := c.Convert(bc)
+	if outcome.State == OutcomeFailed {
+		t.Fatalf("unexpected conversion failure: %s", outcome.Reason)
+	}
+	if len(result) == 0 {
+		t.Fatal("expected a converted Build")
+	}
+
+	vols, _, err := unstructured.NestedSlice(result[0].Object, "spec", "volumes")
+	if err != nil {
+		t.Fatalf("reading spec.volumes: %v", err)
+	}
+	if len(vols) != 0 {
+		t.Errorf("expected no Build spec volume: the user's trusted-ca volume was dropped and the mapping must defer to it, got %+v", vols)
+	}
+	for _, r := range result[1:] {
+		if r.GetKind() == "ConfigMap" && r.GetName() == testTrustedCAConfigMapName {
+			t.Errorf("the injected bundle took the name of the user's own trusted-ca volume: %+v", r.Object)
+		}
+	}
+
+	var sawSkip bool
+	for _, entry := range hook.AllEntries() {
+		if strings.Contains(entry.Message, "skipping the trusted CA mapping") {
+			sawSkip = true
+		}
+	}
+	if !sawSkip {
+		t.Error("expected the warn-and-skip message naming the BuildConfig's own trusted-ca volume")
 	}
 }
 

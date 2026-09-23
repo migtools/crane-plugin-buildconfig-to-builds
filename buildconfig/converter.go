@@ -795,16 +795,27 @@ func (c *Converter) getPullSecret(bc *buildv1.BuildConfig) *corev1.LocalObjectRe
 	return nil
 }
 
-// bcStrategyVolumes returns the volumes declared on the BuildConfig's
+// bcStrategyVolumes returns the volumes declared on the BuildConfig's active
 // strategy regardless of whether they survived conversion — a user-declared
 // volume that was skipped (unsupported source) must still block the trusted
 // CA mapping rather than be silently replaced by the injected bundle.
+//
+// Which block is active is decided by spec.strategy.type, the same way
+// Convert dispatches, not by whichever strategy pointer happens to be set. A
+// BuildConfig of type Source that also carries a populated dockerStrategy
+// would otherwise have the Docker volumes read here: its own trusted-ca
+// volume, converted or skipped, would go unseen and the injected cluster
+// bundle would take that name.
 func bcStrategyVolumes(bc *buildv1.BuildConfig) []buildv1.BuildVolume {
-	if ds := bc.Spec.Strategy.DockerStrategy; ds != nil {
-		return ds.Volumes
-	}
-	if ss := bc.Spec.Strategy.SourceStrategy; ss != nil {
-		return ss.Volumes
+	switch bc.Spec.Strategy.Type {
+	case buildv1.DockerBuildStrategyType:
+		if ds := bc.Spec.Strategy.DockerStrategy; ds != nil {
+			return ds.Volumes
+		}
+	case buildv1.SourceBuildStrategyType:
+		if ss := bc.Spec.Strategy.SourceStrategy; ss != nil {
+			return ss.Volumes
+		}
 	}
 	return nil
 }
