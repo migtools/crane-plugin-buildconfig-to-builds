@@ -32,9 +32,10 @@ For each blocking finding:
 1. **Verify it against the code on disk.**
 
    This review runs against a disposable worktree of the branch (its path `$WT` is given
-   to you), so **the worktree is the branch after `/simplify`** — reading the cited file
-   there gives you the exact code the finding is about, edits included. Read the file and
-   the line. Does the code actually do what the finding claims?
+   to you). **The worktree is the branch, plus Stage 0g's carried change (committed there
+   as a throwaway commit when the branch had uncommitted work), plus `/simplify`'s edits on
+   top.** Reading the cited file there gives you the exact code the finding is about, edits
+   included. Read the file and the line. Does the code actually do what the finding claims?
 
    Common false positives:
    - "Missing nil check" when the check exists a few lines up, or in the caller
@@ -53,9 +54,10 @@ For each blocking finding:
    ```
 
    Diff the worktree against the merge base, not `$MERGE_BASE "$BRANCH"`. You read the cited
-   file from `$WT`, which includes `/simplify`'s uncommitted edits; the committed branch diff
-   does not. Checking against the committed diff would make a line `/simplify` introduced look
-   absent and you would wrongly downgrade it to `pre-existing`. Same worktree, same lines.
+   file from `$WT`, which includes Stage 0g's carried change and `/simplify`'s uncommitted
+   edits; the committed branch diff has neither. Checking against the committed diff would
+   make a line 0g carried or `/simplify` introduced look absent, and you would wrongly
+   downgrade it to `pre-existing`. Same worktree, same lines.
 
    A real problem on a line the branch never touched is `pre-existing`, not a blocker.
    Downgrade it rather than removing it.

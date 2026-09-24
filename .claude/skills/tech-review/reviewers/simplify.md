@@ -88,8 +88,12 @@ the diff.
    `GOWORK=off` is authoritative — the local `go.work` resolves across sibling modules
    and hides breakage CI would catch.
 
-5. If the tests fail, discard your changes and say so. Because `$REPO` is the disposable
-   worktree — it holds nothing but the branch and your edits — a blanket discard is safe:
+5. If the tests fail, discard your changes and say so. `$REPO` holds nothing but the
+   branch, Stage 0g's carried change (committed there as a throwaway commit before you
+   started, when the branch had uncommitted work), and your own edits. You never stage
+   anything (see Constraints), so your edits sit unstaged on top of that commit. Running
+   `checkout -- .` resets the working tree to that commit, discarding only your edits and
+   leaving the carried change untouched. A blanket discard is safe:
 
    ```bash
    git -C "$REPO" checkout -- .

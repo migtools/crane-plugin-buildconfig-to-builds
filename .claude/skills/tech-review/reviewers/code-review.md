@@ -26,10 +26,10 @@ PR time. Style.
 
 ## Procedure
 
-1. Invoke the Skill tool with skill `code-review` and args `<branch> low`, where
-   `<branch>` is the branch name the orchestrator gave you. `low` is the contract: fewer
-   findings, each one high-confidence. Do not pass `--fix` or `--comment`; nothing here
-   edits or posts.
+1. Invoke the Skill tool with skill `code-review` and args `<target> low`, where `<target>`
+   is the commit SHA the orchestrator's Stage 0g carried (`CARRIED_SHA`), or the branch name
+   when Stage 0g had nothing to carry. `low` is the contract: fewer findings, each one
+   high-confidence. Do not pass `--fix` or `--comment`; nothing here edits or posts.
 
    The tool returns at once with a launch message ("forked execution, running in the
    background"). That is not the result. End your turn with the single line
@@ -40,9 +40,17 @@ PR time. Style.
    `status: unavailable` with the tool's text in `reason` and return.
 
 2. On the second wake-up, read the findings from the notification and map each reported
-   issue to one finding. The Skill reviews the committed branch against `main`, so the
-   simplify pass's uncommitted edits in `$WT` are outside its view; the CLI reviewers
-   cover those, and say so in `reason` when the simplify pass changed anything.
+   issue to one finding. The Skill reviews `<target>` against `main`. When `<target>` is
+   Stage 0g's throwaway commit, any work that was uncommitted on the branch is already
+   inside it. Only the simplify pass's edits stay outside this reviewer's view, since they
+   are made afterwards, in the worktree, and never committed. The CLI reviewers cover
+   those, and say so in `reason` when the simplify pass changed anything.
+
+   Before trusting a clean result, check it against what the orchestrator told you. If
+   Stage 0g carried work but the Skill's own summary shows no changed lines, that is a
+   failure, not a clean review, because the fork reviewed the wrong thing. Write
+   `status: failed` with `reason: "reviewed <target> but its diff came back empty despite
+   carried work"`.
 
 3. Classify scope by the line, not the file. A changed-file list cannot tell you whether
    a given line is in the diff:
@@ -80,4 +88,5 @@ for that file; your first, launch-only return does not count as a result.
 - Do not report the missing crane-lib `replace` directive. Its absence is deliberate;
   `AGENTS.md` is stale on that point and `go.mod` is authoritative.
 - Distinguish "reviewed and found nothing" (`status: ok`, empty array) from "did not
-  run" (`failed` or `unavailable`, with a reason).
+  run" (`failed` or `unavailable`, with a reason) from "reviewed the wrong target and saw
+  nothing" (`failed`, with the empty-diff-despite-carried-work reason from step 2).

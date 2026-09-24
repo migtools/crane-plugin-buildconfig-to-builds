@@ -159,6 +159,12 @@ These override everything below.
     never terminates early and never terminates late — it just burns the timeout.
 11. **Delete only what this skill created.** A namespace, strategy or gist that already
     existed is the user's. Ask before touching it.
+12. **Talk to the user in plain words.** Every question, the U7 report and the Compliance
+    Report are drafted with the `plain-words` skill (`.claude/skills/plain-words/SKILL.md`),
+    and use no stage ids or other terms of this skill without saying what they mean. A
+    decision question, where the user picks between options, opens with `Kind:` from
+    `.claude/skills/decision-kinds.md` and gives each option one `Gain:` and one `Cost:`
+    line; the template is in `/tech-design`'s Clarifying gates.
 
 ---
 
@@ -214,6 +220,14 @@ cd "$WT"
 git rev-parse --git-path index    # must be under .git/worktrees/, not the shared index
 git rev-parse --short HEAD        # detached, so --show-current prints nothing; check the SHA instead
 ```
+
+The branch ref holds committed work only, and a story branch's work usually sits
+uncommitted: `/tech-implement` leaves it that way, and only `/create-pr` or `/edit-pr`
+commit it (`AGENTS.md` › Commit policy). When the branch is checked out in another worktree
+with uncommitted changes, copy them into `$WT` the way `/tech-review` Stage 0g does (the
+patch, the untracked files, `add --all`, `write-tree`), with a `mktemp -d` scratch
+directory, and change nothing in the source worktree. Test that tree, and put its tree id
+in the report beside the SHA. With nothing to carry, say so.
 
 Remove the worktree at the end of the stage: `git worktree remove "$WT"`.
 
@@ -319,7 +333,7 @@ here produces two records that drift.
 
 ```
 tech-test unit — BUILD-XXXX
-Branch:   <resolved-branch> @ <short-sha>
+Branch:   <resolved-branch> @ <short-sha>, tree <tree id | no uncommitted work>
 Build:    exit 0
 Vet:      exit 0
 Tests:    N passed, M failed — exit 0
