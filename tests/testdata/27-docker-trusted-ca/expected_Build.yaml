@@ -15,9 +15,7 @@ spec:
   output:
     image: quay.io/example/webapp:latest
   paramValues:
-  - configMapValue: null
-    name: dockerfile
-    secretValue: null
+  - name: dockerfile
     value: Dockerfile
   source:
     git:

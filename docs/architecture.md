@@ -213,6 +213,18 @@ The annotations the plugin writes, and where:
 | `buildconfig-to-shipwright/original-triggers` | Build | `spec.triggers` is not empty |
 | `buildconfig-to-shipwright/inline-dockerfile-configmap` | Build | inline Dockerfile on a Docker strategy |
 
+The emitted YAML changed shape once, with the move to Shipwright v0.21.0 (BUILD-2334).
+Three JSON tags on the `SingleValue` type gained `omitempty`: `value`, `configMapValue` and
+`secretValue`. A Build written by an earlier version of this plugin carried
+`configMapValue: null` and `secretValue: null` under every `paramValues` entry, and
+`value: null` on an entry whose value came from a ConfigMap or Secret reference instead of
+a literal. None of those lines is written now. Nothing about the Build itself moved: all
+three fields are pointers, so only a nil was ever omitted, and anything that parses the
+YAML or unmarshals it into the Shipwright types reads the same object. A consumer that
+diffs generated Build YAML literally is the one that sees a difference. Every golden in
+this repository was regenerated with the bump; none of them held a `value: null`, because
+no fixture uses a ConfigMap or Secret build arg.
+
 ## The files
 
 Each file carries a label that says how a change to it should be reviewed.
@@ -276,6 +288,7 @@ reasoning.
 | 18 | The binary-build warning (W67) names only the `shp build upload` differences Shipwright keeps on purpose: `.gitignore` entries and symlinks pointing outside the directory. Upload bugs with a fix in review are listed in known-limitations.md, not in the warning | warning text is copied into every converted Build and outlives an upstream fix; a sentence about a fixed bug would mislead | `converter_test.go` (`TestConvertBinaryDirectorySource`). ADR-0011 |
 | 19 | The plugin emits nothing crane already migrates for a named ServiceAccount: not the account, not its Secrets, not its RBAC. It writes the name into the BuildRun template and warns about what to check | crane export, crane-lib and crane-plugin-openshift carry the account and its bindings; a second copy from the plugin would overwrite theirs (rule 7) | `converter_test.go` (`TestServiceAccountAssociationWarned`, `TestServiceAccountBuilderAndDeployerWarnedSeparately`, `TestNamedServiceAccountWithPullSecretIsNotGenerated`). ADR-0013 |
 | 20 | `spec.mountTrustedCA` becomes a generated `trusted-ca` volume that fails visibly: only `ca-bundle.crt` is projected, `optional` stays unset, and the mapping defers to any `trusted-ca` volume the BuildConfig's own strategy declares, including one that was dropped as unsupported. Which strategy block is read follows `spec.strategy.type`, the way `Convert` dispatches | a build that asked for the cluster's trust material must not run without it, and the cluster-wide bundle must never take the name of a CA source the user chose | `trustedca_test.go` (`TestConvertMountTrustedCA`, `TestConvertMountTrustedCAVolumesFollowStrategyType`, `TestConvertMountTrustedCAUnsupportedSourceCollision`). ADR-0014 |
+| 21 | A value the Build CRD itself rejects, by schema or by a CEL rule, is dropped and warned about: an output imageLabel whose name is empty or holds an `=`. A value only a cluster setting rejects is kept and warned about: a strategy env entry whose name is on Shipwright's forbidden list, which an administrator replaces through `FORBIDDEN_ENV_VAR_NAMES` | the API server refuses the whole Build over a CRD rule, so emitting it costs the operator everything else on the object; a setting the plugin cannot read (rule 2) may not forbid the name on this target at all, so dropping would throw the value away for nothing | `converter_test.go` (`TestConvertOutputImageLabelWithEqualsWarns`), `strategy_env_test.go` (`TestConvertForbiddenStrategyEnvWarns`, `TestIsForbiddenEnvVar`). ADR-0016 |
 
 ## Where to add things
 
