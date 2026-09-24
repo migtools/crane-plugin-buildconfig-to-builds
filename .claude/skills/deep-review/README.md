@@ -49,6 +49,7 @@ cd ~/Desktop/work-repos/migtools/crane-plugin-buildconfig-to-builds
 /deep-review https://github.com/migtools/crane-plugin-buildconfig-to-builds/pull/24
 /deep-review 24 --only=correctness               # one sub-agent — cheap smoke test
 /deep-review 24 --only=correctness,security      # subset
+/deep-review 24 --light                          # correctness + security, smaller prompt
 /deep-review 24 --post                           # post to GitHub (asks first)
 ```
 
@@ -56,6 +57,7 @@ cd ~/Desktop/work-repos/migtools/crane-plugin-buildconfig-to-builds
 |---|---|
 | *(none)* | Print the review to the terminal. **Posts nothing, edits nothing.** |
 | `--only=a,b` | Restrict dispatch to the named sub-agents. `challenger` still runs. |
+| `--light` | Correctness and security on Opus, then the challenger; drops the full-file copies the diff already covers. Suggested, never chosen for you, on PRs with no Go code, `go.mod` or `docs/` change. Cannot be combined with `--only`. |
 | `--post` | Post via `gh pr review` — shows the exact body and asks for confirmation first. Never posts silently. |
 
 **Start here on a new checkout:**
@@ -191,6 +193,7 @@ this table is only an index. They are restated at the top of the generated
 | **O15** | The challenger downgrades on evidence — never to keep the set small, never on impact it already conceded, never because a file was not supplied | It once demoted the highest-impact finding on set-size grounds, and later demoted a true one for being unverifiable |
 | **O16** | After the challenger, cross-check against reviews already on the PR; a point on the same line is not covered unless it is the same failure | Catches what all five dimensions missed, without anchoring their severities |
 | **O17** | A skill-load `safeguards` API error is intermittent: retry once on the same model, then move the orchestrator to another one | Seen twice on Opus 5 (1M), then absent on two later runs on that same model; not a defect in this skill |
+| **O18** | `--light`: correctness and security only, full-file copies dropped where the diff covers them; suggested on PRs with no Go or `docs/` change | On a skills-only PR the three Sonnet reviewers cost more than the two Opus ones and nothing they found stayed above low |
 
 ---
 
@@ -237,11 +240,13 @@ in `src/header.md` as a new override instead.
   first, then review it.
 - **The run leaves a directory behind.** Prompts, raw sub-agent replies, the
   pre-challenger findings and the adjudicated `verdict.json` / `verdict.md` go to
-  `${TMPDIR:-/tmp}/deep-review-<pr>` (override **O13**), and the run prints the
-  paths. Read it when a finding looks wrong, and delete it when you are done —
-  nothing cleans it up.
+  a private directory under `${TMPDIR:-/tmp}/deep-review-<pr>.<random>`
+  (override **O13**) — `mktemp -d` adds the random suffix, so the path differs
+  on every run — and the run prints the exact path. Read it when a finding
+  looks wrong, and delete it when you are done — nothing cleans it up.
 - **Fixing your own PR does not need the review posted.** Hand the verdict file to
-  the next skill: `/address-review <pr> --from ${TMPDIR:-/tmp}/deep-review-<pr>/verdict.json`.
+  the next skill: `/address-review <pr> --from <path deep-review printed>/verdict.json`,
+  for example `/address-review 32 --from /tmp/deep-review-32.Ab12Cd/verdict.json`.
   It takes each finding as an item already adjudicated by the challenger, so it does
   not triage them again, and it picks up the human and bot comments on the PR in the
   same run. Delete the run directory and the hand-off is gone with it.

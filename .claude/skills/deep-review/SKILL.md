@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: Deep multi-agent PR review — triages the change, dispatches up to 6 specialised sub-agents in parallel (correctness, security, intent-coherence, style, docs, cross-repo contracts), with a security-triage pre-pass on large PRs, then runs an adversarial challenger pass to strip false positives and produces a severity-ranked verdict. Report-only by default. Trigger on "deep-review", "deep review this PR", "fan-out review", or "adversarial review". Reviews an open PR by number or URL; it has no local-branch mode.
-argument-hint: <pr-url|pr-number> [--post] [--only=correctness,security,...]
+argument-hint: <pr-url|pr-number> [--post] [--light | --only=correctness,security,...]
 allowed-tools: [Bash, Read, Grep, Glob, Agent, AskUserQuestion]
 user_invocable: true
 ---
@@ -56,16 +56,30 @@ for `$RUN_DIR`.
 **Check that you were handed the current overrides.** The Skill tool resolves its
 own base directory, and inside a git worktree that is the main checkout rather
 than the worktree you are working in, so the body you were given can be several
-overrides out of date. Compare it with the file on disk, with the printed path
-written out in full:
+overrides out of date. Counting override headings is not enough: an existing
+override can be reworded in place with no new override number added, and the
+highest number then stays the same while the wording underneath it changes.
+Compare the whole section instead of just its highest number.
+
+Save the LOCAL OVERRIDES section you were given to a scratch file, then diff it
+against the same section on disk, with the printed path written out in full:
 
 ```bash
-grep -oE '^### O[0-9]+' <printed-skill-dir>/SKILL.md | tail -1
+cat > /tmp/deep-review-given-overrides.md <<'EOF'
+<paste the LOCAL OVERRIDES section you were given, verbatim, here>
+EOF
+diff /tmp/deep-review-given-overrides.md <(sed -n '/^## LOCAL OVERRIDES/,/^---$/p' <printed-skill-dir>/SKILL.md)
 ```
 
-If that names a higher override number than the highest one in the text you were
-given, read `$SKILL_DIR/SKILL.md` in full and follow that instead, and say in the
-triage which file you followed.
+Any difference at all, not only a higher override number, means your copy is
+stale.
+
+If the two differ, do not pick one on your own. A worktree can hold a branch
+you did not check yourself, so a silent switch is not safe. Tell the user the
+copy you were handed disagrees with the one on disk at
+`<printed-skill-dir>/SKILL.md`, show the diff, and ask which one to follow. Once
+they answer, read `<printed-skill-dir>/SKILL.md` in full if that is the one they
+picked, and say in the triage which file you followed.
 
 `vendor/agent-review.md` is the agent definition the orchestrator calls
 authoritative for prohibitions and the output schema. Read it before step 1 and
@@ -109,13 +123,18 @@ path can never produce `approve`, and never by itself escalates to
 `request-changes`, but a critical or high finding from any other source still
 produces `request-changes` under vendored step 6f.
 
-**Deliberate divergence from upstream.** `vendor/agent-review.md` requires
-`request-changes` when a protected-path change is not justified; this override
-instead caps that escalation at `comment`. That is intentional: this skill has no
-app identity here and posts as a human collaborator on someone else's PR, so the
-conservative direction is to flag and let a human decide, never to block. Keep
-the cap. If upstream's protected-path text changes, this paragraph is the thing
-to re-read, not a bug to reconcile.
+**Deliberate divergence from upstream.** Vendored step 6e's Protected-paths
+check has two rows. Row 1, "Insufficient context" — no linked issue, or the PR
+description does not explain the change — is a high-severity finding whose
+outcome MUST be `request-changes`. Row 2, "Sufficient context", is medium
+severity and its outcome MUST be `comment-only`, which already matches this
+override. This override moves row 1 from `request-changes` to `comment`, so
+every protected-path finding here caps at `comment` no matter how much context
+the PR gives. That is intentional: this skill has no app identity here and
+posts as a human collaborator on someone else's PR, so the conservative
+direction is to flag and let a human decide, never to block. Keep the cap. If
+upstream's protected-path text changes, this paragraph is the thing to
+re-read, not a bug to reconcile.
 
 ### O4. Model mapping
 
@@ -284,6 +303,7 @@ Follow the vendored step 3c selection rules. Two additions:
   that in the triage table; it is the design, not a gap in coverage.
 - `--only=a,b,c` restricts dispatch to the named sub-agents. `challenger` still
   runs afterwards unless explicitly excluded. Use this to test cheaply.
+- `--light` is the named preset for a cheaper review: O18.
 
 ### O8. Re-review context
 
@@ -410,29 +430,40 @@ no-findings case.
 A full context package here runs to 300 KB or more. Pasting that into the
 `prompt` argument of eight Agent calls is wasteful and impossible to check.
 
-1. Make a run directory once: `RUN_DIR="${TMPDIR:-/tmp}/deep-review-$PR_NUMBER"`.
-   Never write run artifacts inside the repo — it is public and none of this is
-   meant to be committed.
+1. Make a private run directory once:
+   `RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/deep-review-$PR_NUMBER.XXXXXX")`. `mktemp -d`
+   also sets the directory's mode to `0700`, independent of the calling shell's
+   umask, so no separate `umask` call is needed. Print it — `echo "$RUN_DIR"` —
+   and use that printed literal path in every later command, the way O1 says to
+   for `<printed-skill-dir>`: shell state does not survive between Bash calls
+   here, so a bare `$RUN_DIR` in a later command is empty. Never write run
+   artifacts inside the repo — it is public and none of this is meant to be
+   committed.
 2. Write the shared context package to `$RUN_DIR/context-package.md` and each
    composed prompt to `$RUN_DIR/prompt-<name>.md`, in exactly the part order
    vendored step 4 gives, and step 6d for the challenger.
 3. The `prompt` argument then carries three things only: that path, an instruction
    to read the file in full before anything else, and the `REVIEW_SUB_AGENT_TRUE`
    guard flag inline.
-4. A changed file larger than the rest of the package put together — a 4000-line
-   test file — goes to `$RUN_DIR/head/<path>` and is named in the package rather
-   than pasted into it.
+4. Before writing a changed file, create its parent directory under
+   `$RUN_DIR/head` with `mkdir -p` — an arbitrary repository path can carry
+   subdirectories that do not exist yet. A changed file larger than the rest of
+   the package put together — a 4000-line test file — then goes to
+   `$RUN_DIR/head/<path>` and is named in the package rather than pasted into it.
 5. Keep each sub-agent's raw reply at `$RUN_DIR/out-<name>.md` and the merged
    pre-challenger findings at `$RUN_DIR/findings.json`. O9 prints what the
    challenger removed because that is the tuning signal; the signal is only
    checkable later if the raw replies still exist. Print `$RUN_DIR` at the end.
 6. Write the adjudicated verdict to two more files in the same directory, after the
    challenger and after O16, so nothing that ran later can still move a severity:
-   - `$RUN_DIR/verdict.json` — the findings as they stand at that point, in the same
-     schema as `findings.json` in step 5, which is the finding object
+   - `$RUN_DIR/verdict.json` — an object `{"head_sha": "<full PR head SHA>",
+     "findings": [...]}`. `findings` holds the findings as they stand at that point, in
+     the same schema as `findings.json` in step 5, which is the finding object
      `vendor/agent-review.md` defines: `severity`, `category`, `file`, `line`,
-     `description`, `remediation`. A finding O16 added keeps the sentence naming who
-     raised it first. No findings means an empty array, written all the same.
+     `description`, `remediation`, plus `actionable`. A finding O16 added keeps the
+     sentence naming who raised it first. No findings means an empty array, written all
+     the same. `/address-review --from` compares `head_sha` with the PR's current head
+     and triages every finding again when they differ, because the code has moved.
    - `$RUN_DIR/verdict.md` — the review body exactly as it was rendered, after O11 and
      with O12's trailer.
 
@@ -588,6 +619,34 @@ runs loaded the same skill text with the orchestrator back on Opus 5 (1M context
 and finished normally. Retry once on the same model; if it dies the same way, move
 the orchestrator to another one. The O4 mapping for the sub-agents is unaffected:
 those are separate calls.
+
+### O18. `--light`: correctness and security only, with a smaller prompt
+
+`--light` is a cheaper run for PRs where the other three dimensions rarely find
+anything worth a comment. On the PR #95 run, a skills-only PR, the three Sonnet
+reviewers cost more than the two Opus ones and produced nothing the challenger kept
+above low: intent-coherence found nothing, both style findings ended at info, and
+the four docs findings ended at low or were merged into a correctness finding.
+
+With `--light`:
+
+1. Dispatch `correctness` and `security` only, both on `opus` as O4 maps them. The
+   challenger still runs afterwards. Skip `intent-coherence`, `style-conventions`,
+   `docs-currency` and `cross-repo-contracts`, whatever step 3c and O7 would select.
+   `--light` together with `--only` is an error: say so and stop.
+2. Build the context package without the full-file section for any changed file
+   whose complete contents the diff already holds, which is the first rung of the
+   ladder in O13. A new file, or a file the diff shows in full, is in the diff only.
+3. Keep everything else: the orchestrator's own checks (step 6e, O16), the verdict
+   rules, O3's protected-path cap, O11, O12 and the O13 verdict files.
+4. Print `Mode : light (skipped intent-coherence, style-conventions, docs-currency,
+   cross-repo-contracts)` in the O9 box, and the same sentence at the top of the
+   review body under the head-SHA line, so a light review is never read as a full
+   one.
+
+Never switch to light mode on your own. When a PR changes no `.go` file, no `go.mod`
+or `go.sum`, and nothing under `docs/`, say at the start of the run that `--light`
+would fit, and carry on in full mode unless the user typed it.
 
 ---
 
