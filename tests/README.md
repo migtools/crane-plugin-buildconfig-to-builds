@@ -116,7 +116,7 @@ runs it on every pull request, and `../hack/README.md` explains the setup.
 Every directory under `tests/testdata/NN-*` is one Entry, and every Entry runs; nothing is
 skipped. 27 cases as of this file, in three groups by what the directory holds.
 
-**Golden comparison (22 cases).** The generated resources must match the
+**Golden comparison (23 cases).** The generated resources must match the
 `expected_<Kind>.yaml` files after YAML normalization:
 
 - ✅ 01-datagrid-hotrod — S2I with triggers
@@ -141,7 +141,7 @@ skipped. 27 cases as of this file, in three groups by what the directory holds.
 - ✅ 25-binary-asfile — Docker with a single-file binary source (asFile)
 - ✅ 26-binary-docker-resources — Docker with binary directory source and resources
 - ✅ 27-docker-trusted-ca — Docker with mountTrustedCA
-- ✅ 27-s2i-forbidden-env — S2I with env names Shipwright forbids
+- ✅ 28-s2i-forbidden-env — S2I with env names Shipwright forbids
 
 **Passthrough with outcome annotations (3 cases).** No Build is generated; the
 BuildConfig comes back with the annotations in `expected_annotations.json`:

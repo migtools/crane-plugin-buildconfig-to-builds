@@ -455,7 +455,7 @@ func isForbiddenEnvVar(name string) bool {
 // schema rule: an administrator replaces it through FORBIDDEN_ENV_VAR_NAMES,
 // and the plugin cannot read the target to find out (ADR-0001), so dropping
 // the entry would throw away a value that is legal on some clusters
-// (ADR-0015). The value never reaches the warning, only the name.
+// (ADR-0016). The value never reaches the warning, only the name.
 func (c *Converter) warnForbiddenEnv(bc *buildv1.BuildConfig, field string, env []corev1.EnvVar) {
 	for _, e := range env {
 		if !isForbiddenEnvVar(e.Name) {
@@ -1312,7 +1312,7 @@ func (c *Converter) processOutputImageLabels(bc *buildv1.BuildConfig, b *shipwri
 		// Both cases come from the same CEL rule on the shared Image type,
 		// self.all(k, k != '' && !k.contains('=')), which v0.21.0 ships in the
 		// Build CRD. The API server rejects the whole Build at apply time, so a
-		// label that trips it is dropped rather than carried (ADR-0015).
+		// label that trips it is dropped rather than carried (ADR-0016).
 		if il.Name == "" {
 			c.warnf("%s", "Skipping output imageLabel with empty name")
 			continue

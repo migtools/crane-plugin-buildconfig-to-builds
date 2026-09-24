@@ -102,6 +102,6 @@ var _ = Describe("BuildConfig to Shipwright Conversion", func() {
 		Entry("binary-asfile", "25-binary-asfile", "Docker with a single-file binary source (asFile)"),
 		Entry("binary-docker-resources", "26-binary-docker-resources", "Docker with binary directory source and resources"),
 		Entry("docker-trusted-ca", "27-docker-trusted-ca", "Docker with mountTrustedCA"),
-		Entry("s2i-forbidden-env", "27-s2i-forbidden-env", "S2I with env names Shipwright forbids"),
+		Entry("s2i-forbidden-env", "28-s2i-forbidden-env", "S2I with env names Shipwright forbids"),
 	)
 })

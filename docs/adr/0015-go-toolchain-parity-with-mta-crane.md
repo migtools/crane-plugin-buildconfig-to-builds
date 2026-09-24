@@ -1,4 +1,4 @@
-# ADR-0014: This module takes Go 1.26 before mta-crane does, and the mta-crane owner decides whether that stands
+# ADR-0015: This module takes Go 1.26 before mta-crane does, and the mta-crane owner decides whether that stands
 
 Status: proposed. Raised 2026-09-22 (BUILD-2334). Verified against migtools/mta-crane at
 `main` (f4f8b559) and shipwright-io/build v0.21.0.

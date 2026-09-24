@@ -1,4 +1,4 @@
-# ADR-0015: Drop a value the Build CRD rejects, keep one only a cluster setting rejects
+# ADR-0016: Drop a value the Build CRD rejects, keep one only a cluster setting rejects
 
 Status: accepted. Decided 2026-09-22 (BUILD-2334). Verified against
 shipwright-io/build v0.21.0.
