@@ -81,7 +81,7 @@ and five more on an error. The rest only add to the Build or warn.
 | 3 | Output-image gate | inline in `Convert` | `spec.output.to` | nothing | Missing or empty: skipped. Shipwright requires an output image |
 | 4 | Pull secret | inline, `getPullSecret`, `generateServiceAccount` | the strategy's `pullSecret`, `spec.serviceAccount` | a new ServiceAccount carrying the secret, only when the BuildConfig names no service account | serialization error: failed |
 | 5 | Named service account | inline in `Convert` | `spec.serviceAccount` | nothing on the Build; step 15 writes the name into the BuildRun template. Warns W9 that crane carries the account, its RoleBindings and the cluster RBAC that names it, and what to check, or W72 when the name is `builder`, `deployer` or `default`, which the migration may not carry over: crane-lib's KubernetesPlugin drops `default`, and crane-plugin-openshift drops the other two, but only when it runs. `crane transform` runs every installed plugin only when no stages are named, and the README names two, so being installed decides nothing. W72 says to check the target for the account and makes the remedy depend on the answer | no |
-| 6 | Inline Dockerfile | `processInlineDockerfile` in `dockerfile.go` | `spec.source.dockerfile` | Docker strategy: a ConfigMap holding the Dockerfile, plus a pointer annotation on the Build. Source strategy: dropped with a warning | serialization error: failed |
+| 6 | Inline Dockerfile, trusted CA | `processInlineDockerfile` in `dockerfile.go`, then `processMountTrustedCA` | `spec.source.dockerfile`, `spec.mountTrustedCA`, the strategy volumes | Docker strategy: a ConfigMap holding the Dockerfile, plus a pointer annotation on the Build. Source strategy: dropped with a warning. `mountTrustedCA: true`: a `trusted-ca` entry in `spec.volumes` and a ConfigMap named after the BuildConfig plus `-trusted-ca-migrated`, labelled for the Cluster Network Operator to fill, unless the BuildConfig already declares a strategy volume by that name | serialization error: failed |
 | 7 | Source | `processSource`, `processGitProxyConfig` | `spec.source` | `spec.source` as Git, Local (either binary form; the build is then started with `shp build upload`) or OCIArtifact (one image); `contextDir`; proxy env vars | more than one source type, more than one image, or a bad image reference: failed |
 | 8 | Output | `processOutput`, `processOutputImageLabels` | `spec.output` and the two mapping flags | `spec.output.image`, `pushSecret`, `labels` | no |
 | 9 | Completion deadline | `processCompletionDeadline` | `completionDeadlineSeconds` | `spec.timeout`; out-of-range values are dropped | no |
@@ -94,7 +94,7 @@ and five more on an error. The rest only add to the Build or warn.
 | 16 | Triggers | `processTriggers` in `triggers.go` | `spec.triggers` | the original triggers as an annotation, secrets removed; one warning per trigger and one summary | no |
 | 17 | Chain notices | `processChainCandidates` in `chain.go` | the strategy `from`, `source.images[].from`, and the ImageChange triggers | nothing; one info line per `ImageStreamTag` input in the BuildConfig's own namespace that no warning already names, saying to run its producer first if there is one | no |
 | 18 | Outcome | inline in `Convert` | the warnings recorded since step 1 | the `conversion-outcome` annotation, and the `conversion-warnings` annotation when any warning fired | no |
-| 19 | Serialize | `toUnstructured`, `stripSerializationNoise` | the Build; the ServiceAccount and ConfigMap were serialized in steps 4 and 6 | the resources crane will write | conversion error: failed |
+| 19 | Serialize | `toUnstructured`, `stripSerializationNoise` | the Build; the ServiceAccount and the ConfigMaps were serialized in steps 4 and 6 | the resources crane will write | conversion error: failed |
 
 ```mermaid
 flowchart TD
@@ -108,7 +108,7 @@ flowchart TD
     S3 -- no --> SK
     S3 -- yes --> S4[4 Pull secret to ServiceAccount]
     S4 --> S5[5 Named service account warning]
-    S5 --> S6[6 Inline Dockerfile to ConfigMap]
+    S5 --> S6[6 Inline Dockerfile, trusted CA to ConfigMaps]
     S6 --> S7[7 Source]
     S7 -- bad source --> FA
     S7 --> S8[8 Output]
@@ -133,10 +133,11 @@ Build, and the `Warnings` field on the outcome all read that one list.
 ## Steps that depend on each other
 
 Most steps only read the BuildConfig and write their own part of the Build, so their order
-does not matter. Five pairs do depend on order:
+does not matter. Seven do depend on order:
 
 | Later step | Needs from an earlier step |
 |---|---|
+| 6 Inline Dockerfile, trusted CA | the strategy name and the converted strategy volumes from step 2: the name decides whether W77 fires, and `spec.volumes` is checked for a `trusted-ca` volume before the mapping runs |
 | 14 Registries | the strategy name from step 2, to decide between a param and `output.insecure`; the output image from step 8 |
 | 15 Resources | the strategy name from step 2, to fill in step names; the generated ServiceAccount name from step 4, or the named account from step 5; the source type from step 7, to tell a Local source that the template cannot start it |
 | 16 Triggers | the BuildRun-template annotation from step 15, which decides whether the ConfigChange warning points at the template or tells the operator to write a BuildRun by hand |
@@ -187,6 +188,7 @@ produce a Build that Kubernetes rejects.
 | Shipwright `Build` | always, for a converted BuildConfig | the BuildConfig's name, sanitized to a valid DNS label |
 | `ServiceAccount` | the strategy has a pull secret and the BuildConfig names no service account | the BuildConfig's name, sanitized |
 | `ConfigMap` | an inline Dockerfile on a Docker strategy | the BuildConfig's name plus `-dockerfile`, sanitized |
+| `ConfigMap` | `spec.mountTrustedCA: true` and no strategy volume named `trusted-ca` | the BuildConfig's name plus `-trusted-ca-migrated`, sanitized |
 | BuildRun template | `spec.resources` has requests or limits, or the BuildConfig names a ServiceAccount, or step 4 generated one | not a resource: YAML text in the `buildconfig-to-shipwright/buildrun-template` annotation |
 
 Names go through `uniqueName` in `converter.go`, which calls `sanitizeDNS1123Label` in
@@ -273,6 +275,7 @@ reasoning.
 | 17 | The default strategy names, `buildah` and `source-to-image`, are strategy-catalog names. The target is a cluster running the Builds for Red Hat OpenShift operator; upstream Shipwright is not a supported target, and `--default-build-strategy` renames to a copy of a catalog strategy, not to an upstream one | upstream declares a smaller parameter set, so renaming trades a failure on the name for one on the parameters | `converter_test.go` (`TestConvertDockerStrategyBasic`, `TestConvertSourceStrategyBasic`) assert the two names. ADR-0010 |
 | 18 | The binary-build warning (W67) names only the `shp build upload` differences Shipwright keeps on purpose: `.gitignore` entries and symlinks pointing outside the directory. Upload bugs with a fix in review are listed in known-limitations.md, not in the warning | warning text is copied into every converted Build and outlives an upstream fix; a sentence about a fixed bug would mislead | `converter_test.go` (`TestConvertBinaryDirectorySource`). ADR-0011 |
 | 19 | The plugin emits nothing crane already migrates for a named ServiceAccount: not the account, not its Secrets, not its RBAC. It writes the name into the BuildRun template and warns about what to check | crane export, crane-lib and crane-plugin-openshift carry the account and its bindings; a second copy from the plugin would overwrite theirs (rule 7) | `converter_test.go` (`TestServiceAccountAssociationWarned`, `TestServiceAccountBuilderAndDeployerWarnedSeparately`, `TestNamedServiceAccountWithPullSecretIsNotGenerated`). ADR-0013 |
+| 20 | `spec.mountTrustedCA` becomes a generated `trusted-ca` volume that fails visibly: only `ca-bundle.crt` is projected, `optional` stays unset, and the mapping defers to any `trusted-ca` volume the BuildConfig's own strategy declares, including one that was dropped as unsupported. Which strategy block is read follows `spec.strategy.type`, the way `Convert` dispatches | a build that asked for the cluster's trust material must not run without it, and the cluster-wide bundle must never take the name of a CA source the user chose | `trustedca_test.go` (`TestConvertMountTrustedCA`, `TestConvertMountTrustedCAVolumesFollowStrategyType`, `TestConvertMountTrustedCAUnsupportedSourceCollision`). ADR-0014 |
 
 ## Where to add things
 
@@ -320,5 +323,4 @@ No test checks this table; it is kept by hand.
 | PR | Story | What changes |
 |---|---|---|
 | [#65](https://github.com/migtools/crane-plugin-buildconfig-to-builds/pull/65) | BUILD-2432 | Adds `docs/support-matrix.md`, a field-by-field list of what converts, warns or drops, and a test that keeps it in step with the warnings in the code. The introduction and the "A new warning" entry above point at it |
-| [#23](https://github.com/migtools/crane-plugin-buildconfig-to-builds/pull/23) | BUILD-2265 | Adds a step, `processMountTrustedCA`, that appends a `trusted-ca` volume and emits a third generated resource, a CA-bundle ConfigMap. Adds four constants for it. The branch predates the outcome model and records its warnings with `Log.Warnf` instead of `warnf`, so it needs a rebase and a port to rule 1 before it lands |
 | [#63](https://github.com/migtools/crane-plugin-buildconfig-to-builds/pull/63) | | Adds a Go E2E framework under `tests/e2e` and `tests/framework`, driven by `tests/rules.yaml` and YAML fixtures. Those files need a review label in [The files](#the-files) |

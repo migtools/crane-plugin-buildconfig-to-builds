@@ -1,0 +1,23 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: webapp-ca
+  namespace: myapp
+  labels:
+    app: webapp
+spec:
+  runPolicy: Parallel
+  mountTrustedCA: true
+  source:
+    type: Git
+    git:
+      uri: https://github.com/example/webapp.git
+      ref: main
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: DockerImage
+      name: quay.io/example/webapp:latest

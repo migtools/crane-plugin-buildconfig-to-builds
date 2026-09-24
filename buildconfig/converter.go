@@ -73,6 +73,44 @@ const (
 	// VolumeMigrationDoc is the runbook for making converted Build volumes
 	// pass Shipwright validation (repo-relative; upstream URL not assumed).
 	VolumeMigrationDoc = "docs/volume-migration.md in the crane-plugin-buildconfig-to-shipwright repository"
+
+	// TrustedCAVolumeName is the overridable volume defined by the shipped
+	// buildah and source-to-image ClusterBuildStrategies for CA bundle
+	// injection (strategy-catalog PR #30, BUILD-2342, commit cb2432c). A
+	// catalog older than that commit declares no such volume, which is what
+	// the warning about the minimum catalog version exists to say.
+	TrustedCAVolumeName = "trusted-ca"
+	// TrustedCAMountPath is where the shipped strategies mount the trusted-ca
+	// volume. They import only its .crt and .pem files into the trust store,
+	// so a BuildConfig that mounted its own trusted-ca volume elsewhere loses
+	// that path.
+	TrustedCAMountPath = "/var/shipwright/trusted-ca"
+	// TrustedCABundleConfigMapSuffix is appended to the BuildConfig's name,
+	// as every other generated name is, to form the per-conversion CA bundle
+	// ConfigMap name — mirroring native OpenShift builds, which own a CA
+	// ConfigMap per build.
+	//
+	// The suffix is deliberately more distinctive than the volume name would
+	// suggest ("-trusted-ca-migrated", not "-trusted-ca"): crane calls this
+	// plugin once per resource (PluginRequest carries a single object), so it
+	// cannot see whether the export already has a ConfigMap by that name, and
+	// crane dedups the final resource list by Kind/namespace/name, keeping
+	// only the last one and silently dropping the other. If the generated
+	// ConfigMap won that collision it would carry the Cluster Network
+	// Operator's inject-trusted-cabundle label onto a ConfigMap the user
+	// actually owns, and the operator would then overwrite that ConfigMap's
+	// data. A name this specific is realistically never one a hand-made
+	// ConfigMap already carries.
+	TrustedCABundleConfigMapSuffix = "-trusted-ca-migrated"
+	// TrustedCABundleKey is the ConfigMap key the Cluster Network Operator
+	// injects the cluster CA bundle under. The volume projection is restricted
+	// to this key so stray keys added to the ConfigMap can never enter the
+	// build's trust store (matches native OpenShift build behavior).
+	TrustedCABundleKey = "ca-bundle.crt"
+	// InjectTrustedCABundleLabel asks the Cluster Network Operator to inject
+	// the cluster-wide CA bundle into the labeled ConfigMap as ca-bundle.crt —
+	// the same mechanism OpenShift builds use for spec.mountTrustedCA.
+	InjectTrustedCABundleLabel = "config.openshift.io/inject-trusted-cabundle"
 )
 
 // craneDefaultRBACAccounts are the ServiceAccounts crane drops from a migration
@@ -223,6 +261,16 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 		cmUnstructured, err := toUnstructured(cm)
 		if err != nil {
 			return nil, outcomeFailed(fmt.Sprintf("error converting inline-Dockerfile ConfigMap to unstructured: %v", err))
+		}
+		newResources = append(newResources, cmUnstructured)
+	}
+
+	// MountTrustedCA → trusted-ca volume override backed by an injected CA
+	// bundle ConfigMap.
+	if caConfigMap := c.processMountTrustedCA(bc, b); caConfigMap != nil {
+		cmUnstructured, err := toUnstructured(caConfigMap)
+		if err != nil {
+			return nil, outcomeFailed(fmt.Sprintf("error converting trusted CA ConfigMap to unstructured: %v", err))
 		}
 		newResources = append(newResources, cmUnstructured)
 	}
@@ -672,15 +720,30 @@ func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwright
 }
 
 // processStrategyVolumes converts BuildConfig strategy volumes into Shipwright
-// Build spec volumes and returns the number of volumes appended. Secret and
-// ConfigMap sources are supported; volumes with an empty name, a duplicate
-// name, or an unsupported source type are skipped with a warning so the rest
-// of the conversion can proceed. Each converted volume gets a remediation
-// warning: Shipwright matches Build volumes to strategy volumes by exact
-// name, takes mount paths only from strategy step volumeMounts, and rejects
-// Builds whose volume names the strategy does not declare (UndefinedVolume).
+// Build spec volumes and returns the number of converted volumes that still
+// need the generic strategy-declaration remediation — the count the caller
+// uses to decide whether warnStrategyVolumesRejected's summary warning
+// applies. Secret and ConfigMap sources are supported; volumes with an empty
+// name, a duplicate name, or an unsupported source type are skipped with a
+// warning so the rest of the conversion can proceed.
+//
+// Every converted volume gets a remediation warning, but a volume literally
+// named "trusted-ca" gets a different one than the rest. The generic warning
+// says Shipwright matches Build volumes to strategy volumes by exact name,
+// takes mount paths only from strategy step volumeMounts, and rejects Builds
+// whose volume names the strategy does not declare (UndefinedVolume) —
+// telling the operator to add that volume to their ClusterBuildStrategy
+// copy. That remediation is wrong for "trusted-ca": the shipped buildah and
+// source-to-image ClusterBuildStrategies already declare an overridable
+// volume by that name, from strategy-catalog commit cb2432c onward (the same
+// volume processMountTrustedCA maps to), so a BuildConfig that names its own
+// "trusted-ca" strategy volume may need no strategy change at all. That
+// volume's warning points at the catalog-version check instead, and is not
+// counted toward the return value, so a BuildConfig whose only volume is
+// named "trusted-ca" never gets the generic ClusterBuildStrategy-does-not-
+// declare-them summary either.
 func (c *Converter) processStrategyVolumes(bc *buildv1.BuildConfig, volumes []buildv1.BuildVolume, b *shipwrightv1beta1.Build) int {
-	converted := 0
+	needsRemediation := 0
 	seen := make(map[string]bool, len(volumes))
 	for _, bcVolume := range volumes {
 		c.Log.Infof("Processing volume %q for BuildConfig %s", bcVolume.Name, bc.Name)
@@ -705,7 +768,6 @@ func (c *Converter) processStrategyVolumes(bc *buildv1.BuildConfig, volumes []bu
 			Name:         bcVolume.Name,
 			VolumeSource: volumeSource,
 		})
-		converted++
 
 		destinations := "no destination paths were declared in the BuildConfig; use the path your build expects"
 		paths := make([]string, 0, len(bcVolume.Mounts))
@@ -719,15 +781,25 @@ func (c *Converter) processStrategyVolumes(bc *buildv1.BuildConfig, volumes []bu
 		if len(paths) > 0 {
 			destinations = "original BuildConfig destination paths: " + strings.Join(paths, ", ")
 		}
+
+		if bcVolume.Name == TrustedCAVolumeName {
+			c.warnf("Volume %q was converted. Unlike other strategy volumes, the shipped buildah and source-to-image ClusterBuildStrategies already declare an overridable volume by this name, from strategy-catalog commit cb2432c onward, so on a target at or after that commit the Build registers without a strategy change — check first: oc get clusterbuildstrategy %s -o jsonpath='{.spec.volumes[*].name}'. Those strategies mount it at %s and import only its .crt and .pem files into the trust store; if the build expects the files at another path (%s), adapt the build or point it at a strategy copy that mounts the volume there. A catalog older than cb2432c, or a strategy of your own, declares no such volume and Shipwright will reject the Build (Registered=False, reason: UndefinedVolume) until you add one: volumes: [{name: %s, overridable: true, emptyDir: {}}] plus a volumeMount for '%s' on the strategy build step.", bcVolume.Name, b.Spec.Strategy.Name, TrustedCAMountPath, destinations, bcVolume.Name, bcVolume.Name)
+			continue
+		}
+
+		needsRemediation++
 		c.warnf("Volume %q was converted, but the Build will fail validation (reason: UndefinedVolume) until you: (1) add an overridable volume named '%s' to your ClusterBuildStrategy copy — volumes: [{name: %s, overridable: true, emptyDir: {}}] (placeholder source; the converted Build's override supplies the real Secret/ConfigMap), (2) add a volumeMount for '%s' on the strategy build step (%s), (3) point the Build at the strategy copy via spec.strategy.name. See %s.", bcVolume.Name, bcVolume.Name, bcVolume.Name, bcVolume.Name, destinations, VolumeMigrationDoc)
 	}
-	return converted
+	return needsRemediation
 }
 
 // warnStrategyVolumesRejected emits the per-BuildConfig summary warning for
 // converted strategy volumes: Shipwright validates Build spec volumes by name
 // against the strategy, so conversion alone leaves the Build failing
-// validation until the strategy declares the volumes.
+// validation until the strategy declares the volumes. The caller only calls
+// this when processStrategyVolumes converted at least one volume that is not
+// named "trusted-ca" — that name's own warning already covers what the
+// target strategy needs.
 func (c *Converter) warnStrategyVolumesRejected(strategyLabel string) {
 	c.warnf("Volumes were converted to Build spec volumes, but the shipped %s ClusterBuildStrategy does not declare them: Shipwright will reject the Build (Registered=False, reason: UndefinedVolume) until a matching volume with 'overridable: true' is added to a copy of the strategy. See %s.", strategyLabel, VolumeMigrationDoc)
 }
@@ -763,6 +835,116 @@ func (c *Converter) getPullSecret(bc *buildv1.BuildConfig) *corev1.LocalObjectRe
 		return bc.Spec.Strategy.SourceStrategy.PullSecret
 	}
 	return nil
+}
+
+// bcStrategyVolumes returns the volumes declared on the BuildConfig's active
+// strategy regardless of whether they survived conversion — a user-declared
+// volume that was skipped (unsupported source) must still block the trusted
+// CA mapping rather than be silently replaced by the injected bundle.
+//
+// Which block is active is decided by spec.strategy.type, the same way
+// Convert dispatches, not by whichever strategy pointer happens to be set. A
+// BuildConfig of type Source that also carries a populated dockerStrategy
+// would otherwise have the Docker volumes read here: its own trusted-ca
+// volume, converted or skipped, would go unseen and the injected cluster
+// bundle would take that name.
+func bcStrategyVolumes(bc *buildv1.BuildConfig) []buildv1.BuildVolume {
+	switch bc.Spec.Strategy.Type {
+	case buildv1.DockerBuildStrategyType:
+		if ds := bc.Spec.Strategy.DockerStrategy; ds != nil {
+			return ds.Volumes
+		}
+	case buildv1.SourceBuildStrategyType:
+		if ss := bc.Spec.Strategy.SourceStrategy; ss != nil {
+			return ss.Volumes
+		}
+	}
+	return nil
+}
+
+// processMountTrustedCA maps spec.mountTrustedCA to the overridable
+// "trusted-ca" volume defined by the shipped buildah and source-to-image
+// ClusterBuildStrategies (strategy-catalog PR #30). It appends a Build spec
+// volume backed by a namespace-local ConfigMap and returns that ConfigMap so
+// the caller can emit it alongside the Build. The ConfigMap carries the
+// config.openshift.io/inject-trusted-cabundle=true label so the Cluster
+// Network Operator injects the cluster CA bundle into it as ca-bundle.crt —
+// the same mechanism OpenShift builds use — which the strategy's CA import
+// step then picks up via its *.crt glob. The projection is restricted to the
+// ca-bundle.crt key, so the mount fails visibly (rather than silently
+// building without the requested trust) until the injector populates the
+// ConfigMap; on clusters without the Cluster Network Operator the key must
+// be populated manually. The ConfigMap is named after the BuildConfig plus
+// -trusted-ca-migrated, sanitized, as the inline-Dockerfile ConfigMap and the
+// generated ServiceAccount are named — see TrustedCABundleConfigMapSuffix
+// for why that suffix is this distinctive.
+func (c *Converter) processMountTrustedCA(bc *buildv1.BuildConfig, b *shipwrightv1beta1.Build) *corev1.ConfigMap {
+	if bc.Spec.MountTrustedCA == nil || !*bc.Spec.MountTrustedCA {
+		return nil
+	}
+
+	declared := false
+	for _, v := range b.Spec.Volumes {
+		if v.Name == TrustedCAVolumeName {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		// Also check the original BuildConfig strategy volumes: a user-declared
+		// trusted-ca volume whose source could not be converted was skipped by
+		// processStrategyVolumes (with its own warning) and must not be
+		// silently replaced by the injected cluster bundle.
+		for _, v := range bcStrategyVolumes(bc) {
+			if v.Name == TrustedCAVolumeName {
+				declared = true
+				break
+			}
+		}
+	}
+	if declared {
+		c.warnf("BuildConfig %s sets mountTrustedCA but already declares a strategy volume named %q — deferring to the explicit volume and skipping the trusted CA mapping (if the explicit volume was itself skipped as unsupported, migrate its CA source manually)", bc.Name, TrustedCAVolumeName)
+		return nil
+	}
+
+	cmName := c.uniqueName("ConfigMap", bc.Name+TrustedCABundleConfigMapSuffix)
+
+	b.Spec.Volumes = append(b.Spec.Volumes, shipwrightv1beta1.BuildVolume{
+		Name: TrustedCAVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+				// Only the operator-managed bundle key is projected: extra keys
+				// added to the ConfigMap never enter the trust store, and a
+				// missing key fails the mount visibly instead of silently
+				// building without the requested trust.
+				Items: []corev1.KeyToPath{{Key: TrustedCABundleKey, Path: TrustedCABundleKey}},
+			},
+		},
+	})
+
+	c.warnf("mountTrustedCA for BuildConfig %s relies on the OpenShift Cluster Network Operator injecting the cluster CA bundle into ConfigMap %q (label %s); on clusters without that injector the %s key stays absent and BuildRun pods will fail to mount the %q volume until the key is populated manually. The volume itself reached the shipped buildah and source-to-image ClusterBuildStrategies in strategy-catalog commit cb2432c, so check the target declares it before you apply: oc get clusterbuildstrategy %s -o jsonpath='{.spec.volumes[*].name}'. A catalog older than cb2432c declares no such volume and Shipwright refuses to register the Build (Registered=False, reason UndefinedVolume), whatever the strategy is called", bc.Name, cmName, InjectTrustedCABundleLabel, TrustedCABundleKey, TrustedCAVolumeName, b.Spec.Strategy.Name)
+
+	if name := b.Spec.Strategy.Name; name != defaultDockerStrategy && name != defaultS2IStrategy {
+		c.warnf("mountTrustedCA was mapped to the %q volume for BuildConfig %s, but the target ClusterBuildStrategy %q is not a shipped strategy — Shipwright will reject the Build (Registered=False, reason UndefinedVolume) unless the strategy declares a matching overridable volume: volumes: [{name: %s, overridable: true, emptyDir: {}}] plus a volumeMount on the build step", TrustedCAVolumeName, bc.Name, name, TrustedCAVolumeName)
+	}
+
+	return &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "ConfigMap",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cmName,
+			Namespace: bc.Namespace,
+			Labels: map[string]string{
+				InjectTrustedCABundleLabel: "true",
+			},
+			Annotations: map[string]string{
+				ConvertedFromAnnotation: fmt.Sprintf("build.openshift.io/v1/BuildConfig/%s", bc.Name),
+			},
+		},
+	}
 }
 
 // generateServiceAccount builds a ServiceAccount that carries the BuildConfig's
