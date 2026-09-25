@@ -1953,6 +1953,78 @@ func TestConvertGitProxyConfigAppendsAfterStrategyEnv(t *testing.T) {
 	}
 }
 
+// TestConvertGitProxyConfigSkipsStrategyEnvCollision is the colliding-name
+// sibling of TestConvertGitProxyConfigAppendsAfterStrategyEnv. BUILD-2500
+// review (coderabbit, aufi): before this PR spec.env never fed s2i, so a name
+// dockerStrategy.env/sourceStrategy.env shared with the Git proxy was
+// harmless; NewResources' build-env NAME=$(NAME) mapping now resolves a
+// duplicate name to its last entry, so the Git proxy default must not
+// silently win over an explicit strategy value. The strategy's HTTP_PROXY
+// stays the only one with that name; the uncontested lowercase twin is still
+// added, and one warning names what was skipped.
+func TestConvertGitProxyConfigSkipsStrategyEnvCollision(t *testing.T) {
+	logger, hook := logrustest.NewNullLogger()
+	plugin := &BuildConfigTransformPlugin{Log: logger}
+	strategyProxy := "http://strategy-proxy.example.com:3128"
+	gitProxy := "http://git-proxy.example.com:3128"
+	request := transform.PluginRequest{
+		Unstructured: unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "build.openshift.io/v1",
+			"kind":       "BuildConfig",
+			"metadata":   map[string]interface{}{"name": "proxy-collision", "namespace": "myns"},
+			"spec": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type": "Git",
+					"git": map[string]interface{}{
+						"uri":       "https://github.com/example/myapp.git",
+						"httpProxy": gitProxy,
+					},
+				},
+				"strategy": map[string]interface{}{
+					"type": "Docker",
+					"dockerStrategy": map[string]interface{}{
+						"env": []interface{}{
+							map[string]interface{}{"name": "HTTP_PROXY", "value": strategyProxy},
+							map[string]interface{}{"name": "FOO", "value": "bar"},
+						},
+					},
+				},
+				"output": map[string]interface{}{
+					"to": map[string]interface{}{"kind": "DockerImage", "name": "quay.io/example/myapp:latest"},
+				},
+			},
+		}},
+	}
+
+	resp, err := plugin.Run(request)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	b := &shipwrightv1beta1.Build{}
+	jsonBytes, _ := json.Marshal(resp.NewResources[0].Object)
+	json.Unmarshal(jsonBytes, b)
+
+	want := []corev1.EnvVar{
+		{Name: "HTTP_PROXY", Value: strategyProxy},
+		{Name: "FOO", Value: "bar"},
+		{Name: "http_proxy", Value: gitProxy},
+	}
+	if !reflect.DeepEqual(b.Spec.Env, want) {
+		t.Errorf("Env = %#v, want the strategy's HTTP_PROXY kept and only http_proxy added: %#v", b.Spec.Env, want)
+	}
+
+	var warns []string
+	for _, e := range hook.AllEntries() {
+		if e.Level == logrus.WarnLevel {
+			warns = append(warns, e.Message)
+		}
+	}
+	if countContaining(warns, "sets HTTP_PROXY in its strategy env and in source.git proxyConfig") != 1 {
+		t.Errorf("want one warning naming the skipped HTTP_PROXY collision, got %v", warns)
+	}
+}
+
 func TestConvertSourceSecretsWarnings(t *testing.T) {
 	logger, hook := logrustest.NewNullLogger()
 	plugin := &BuildConfigTransformPlugin{Log: logger}
