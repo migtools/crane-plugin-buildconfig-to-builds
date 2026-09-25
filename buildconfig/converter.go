@@ -208,9 +208,27 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 		return nil, outcomeSkipped(reason)
 	}
 
+	// The namespace, the named ServiceAccount and the pull secret go into commands
+	// the warnings below tell the operator to paste. The API server validated them
+	// on a real export, but a hand-edited one reaches here unchecked, so each is
+	// checked once against the API server's own rule; commandArg puts a
+	// placeholder in the command, and this says which name it replaced (BUILD-2439).
+	// Each result is kept: the command text built below needs the same value again.
+	// The PullSecret → ServiceAccount step below starts here, with the fetch.
+	pullSecret := c.getPullSecret(bc)
+	cmdNS, nsValid := commandArg(bc.Namespace, namespacePlaceholder, validation.IsDNS1123Label)
+	cmdSA, saValid := commandArg(bc.Spec.ServiceAccount, serviceAccountPlaceholder, validation.IsDNS1123Subdomain)
+	c.warnInvalidName(bc, "namespace", bc.Namespace, cmdNS, nsValid)
+	c.warnInvalidName(bc, "ServiceAccount", bc.Spec.ServiceAccount, cmdSA, saValid)
+	var cmdSecret string
+	if pullSecret != nil {
+		var secretValid bool
+		cmdSecret, secretValid = commandArg(pullSecret.Name, pullSecretPlaceholder, validation.IsDNS1123Subdomain)
+		c.warnInvalidName(bc, "pull secret", pullSecret.Name, cmdSecret, secretValid)
+	}
+
 	// PullSecret → ServiceAccount
 	generatedSA := ""
-	pullSecret := c.getPullSecret(bc)
 	if pullSecret != nil {
 		if bc.Spec.ServiceAccount != "" {
 			// crane migrates the named ServiceAccount as its own resource and
@@ -218,9 +236,9 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 			// overwrite it (crane keeps the last duplicate; imagePullSecrets is
 			// an atomic list on apply). Leave the account alone and tell the
 			// operator how to attach the pull secret on the target.
-			ns, sa, secret := bc.Namespace, bc.Spec.ServiceAccount, pullSecret.Name
+			sa, secret := bc.Spec.ServiceAccount, pullSecret.Name
 			c.warnf("BuildConfig %s/%s names ServiceAccount %q and pull secret %q. This conversion does not modify that ServiceAccount (the ServiceAccount warning on this Build describes how crane handles it), so attach the pull secret on the target cluster before running the BuildRun: oc -n %s secrets link %s %s --for=pull,mount",
-				ns, bc.Name, sa, secret, ns, sa, secret)
+				bc.Namespace, bc.Name, sa, secret, cmdNS, cmdSA, cmdSecret)
 		} else {
 			sa := c.generateServiceAccount(bc, pullSecret)
 			generatedSA = sa.Name
@@ -248,8 +266,10 @@ func (c *Converter) Convert(bc *buildv1.BuildConfig) ([]unstructured.Unstructure
 	// list, so both warnings say what to check rather than what happened. Step
 	// 15 writes the name into the BuildRun template either way.
 	if sa := bc.Spec.ServiceAccount; isCraneDefaultRBACAccount(sa) {
+		// sa is default, builder or deployer here; cmdNS above already covers the
+		// only value in this warning's commands that needs the check.
 		c.warnf("BuildConfig %s/%s names ServiceAccount %q, which the migration may not carry over: crane-lib's KubernetesPlugin drops default under strip-default-rbac, and crane-plugin-openshift drops builder and deployer, but only when it runs, which it does when it is one of the stages named on crane transform or when no stages are named at all. The BuildRun template names %q anyway, so check the target before the first BuildRun: oc -n %s get serviceaccount %s. If the account is there, leave the BuildRun on it, confirm it holds the SCC the build strategy needs, and link to it any pull secret the other warnings on this Build name. If it is not, create an account for this build, link those secrets to that one, grant it the SCC scoped to itself with oc adm policy add-scc-to-user pipelines-scc -z <sa> -n %s, and name it on the BuildRun; the namespace pipeline account already holds the grant and is the shorter path, but it is a shared identity every other Tekton workload in the namespace runs as. Either way, do not grant that SCC to the namespace's default account: every pod that names no account runs as it.",
-			bc.Namespace, bc.Name, sa, sa, bc.Namespace, sa, bc.Namespace)
+			bc.Namespace, bc.Name, sa, sa, cmdNS, sa, cmdNS)
 	} else if sa != "" {
 		c.warnf("crane migrates ServiceAccount %q named by BuildConfig %s/%s, with its RoleBindings and any ClusterRoleBinding, ClusterRole or SCC that names it, if the account was in the export. It does not carry the account's secrets list: re-link any secret that was linked with --for=mount. Read the exported _cluster resources before applying them (no --skip-cluster-scoped), and check each name against the target: an SCC or ClusterRole is cluster-global, and an exported SCC carries the source cluster's own users and groups, so one that shares a name with an SCC on the target replaces it. Confirm the account holds the SCC the build strategy needs before running the BuildRun.",
 			sa, bc.Namespace, bc.Name)
@@ -530,6 +550,10 @@ func (c *Converter) processDockerStrategy(bc *buildv1.BuildConfig, b *shipwright
 	if override, ok := c.Opts.StrategyMapping["docker"]; ok && override != "" {
 		strategyName = override
 	}
+	// --default-build-strategy is not validated, and W76 and W78 paste this
+	// name into an oc command. Warn once here if it is not a valid name.
+	cmdStrategy, strategyValid := commandArg(strategyName, strategyPlaceholder, validation.IsDNS1123Subdomain)
+	c.warnInvalidName(bc, "build strategy", strategyName, cmdStrategy, strategyValid)
 	clusterKind := shipwrightv1beta1.ClusterBuildStrategyKind
 	b.Spec.Strategy = shipwrightv1beta1.Strategy{
 		Kind: &clusterKind,
@@ -698,6 +722,10 @@ func (c *Converter) processSourceStrategy(bc *buildv1.BuildConfig, b *shipwright
 	if override, ok := c.Opts.StrategyMapping["s2i"]; ok && override != "" {
 		strategyName = override
 	}
+	// --default-build-strategy is not validated, and W76 and W78 paste this
+	// name into an oc command. Warn once here if it is not a valid name.
+	cmdStrategy, strategyValid := commandArg(strategyName, strategyPlaceholder, validation.IsDNS1123Subdomain)
+	c.warnInvalidName(bc, "build strategy", strategyName, cmdStrategy, strategyValid)
 	clusterKind := shipwrightv1beta1.ClusterBuildStrategyKind
 	b.Spec.Strategy = shipwrightv1beta1.Strategy{
 		Kind: &clusterKind,
@@ -849,7 +877,9 @@ func (c *Converter) processStrategyVolumes(bc *buildv1.BuildConfig, volumes []bu
 		}
 
 		if bcVolume.Name == TrustedCAVolumeName {
-			c.warnf("Volume %q was converted. Unlike other strategy volumes, the shipped buildah and source-to-image ClusterBuildStrategies already declare an overridable volume by this name, from strategy-catalog commit cb2432c onward, so on a target at or after that commit the Build registers without a strategy change — check first: oc get clusterbuildstrategy %s -o jsonpath='{.spec.volumes[*].name}'. Those strategies mount it at %s and import only its .crt and .pem files into the trust store; if the build expects the files at another path (%s), adapt the build or point it at a strategy copy that mounts the volume there. A catalog older than cb2432c, or a strategy of your own, declares no such volume and Shipwright will reject the Build (Registered=False, reason: UndefinedVolume) until you add one: volumes: [{name: %s, overridable: true, emptyDir: {}}] plus a volumeMount for '%s' on the strategy build step.", bcVolume.Name, b.Spec.Strategy.Name, TrustedCAMountPath, destinations, bcVolume.Name, bcVolume.Name)
+			// The strategy step already warned if this name is invalid.
+			cmdStrategy, _ := commandArg(b.Spec.Strategy.Name, strategyPlaceholder, validation.IsDNS1123Subdomain)
+			c.warnf("Volume %q was converted. Unlike other strategy volumes, the shipped buildah and source-to-image ClusterBuildStrategies already declare an overridable volume by this name, from strategy-catalog commit cb2432c onward, so on a target at or after that commit the Build registers without a strategy change — check first: oc get clusterbuildstrategy %s -o jsonpath='{.spec.volumes[*].name}'. Those strategies mount it at %s and import only its .crt and .pem files into the trust store; if the build expects the files at another path (%s), adapt the build or point it at a strategy copy that mounts the volume there. A catalog older than cb2432c, or a strategy of your own, declares no such volume and Shipwright will reject the Build (Registered=False, reason: UndefinedVolume) until you add one: volumes: [{name: %s, overridable: true, emptyDir: {}}] plus a volumeMount for '%s' on the strategy build step.", bcVolume.Name, cmdStrategy, TrustedCAMountPath, destinations, bcVolume.Name, bcVolume.Name)
 			continue
 		}
 
@@ -891,6 +921,19 @@ func convertBuildVolumeSource(bcSource buildv1.BuildVolumeSource) (corev1.Volume
 	}
 
 	return volumeSource, nil
+}
+
+// warnInvalidName warns when commandArg rejected a value that is set: the
+// target cluster cannot hold an object with that name, and cmdArg, the
+// placeholder, has taken its place in any command a warning prints. Callers pass
+// commandArg's results because they need cmdArg for the command text nearby. An
+// empty value names nothing to correct, so it gets the placeholder and no warning.
+func (c *Converter) warnInvalidName(bc *buildv1.BuildConfig, what, value, cmdArg string, valid bool) {
+	if valid || value == "" {
+		return
+	}
+	c.warnf("BuildConfig %s/%s names %s %q, which is not a valid Kubernetes name, so the target cluster will reject an object with that name. Any command in this Build's warnings shows %s in its place: correct the name in the export and convert again.",
+		bc.Namespace, bc.Name, what, value, cmdArg)
 }
 
 func (c *Converter) getPullSecret(bc *buildv1.BuildConfig) *corev1.LocalObjectReference {
@@ -989,7 +1032,9 @@ func (c *Converter) processMountTrustedCA(bc *buildv1.BuildConfig, b *shipwright
 		},
 	})
 
-	c.warnf("mountTrustedCA for BuildConfig %s relies on the OpenShift Cluster Network Operator injecting the cluster CA bundle into ConfigMap %q (label %s); on clusters without that injector the %s key stays absent and BuildRun pods will fail to mount the %q volume until the key is populated manually. The volume itself reached the shipped buildah and source-to-image ClusterBuildStrategies in strategy-catalog commit cb2432c, so check the target declares it before you apply: oc get clusterbuildstrategy %s -o jsonpath='{.spec.volumes[*].name}'. A catalog older than cb2432c declares no such volume and Shipwright refuses to register the Build (Registered=False, reason UndefinedVolume), whatever the strategy is called", bc.Name, cmName, InjectTrustedCABundleLabel, TrustedCABundleKey, TrustedCAVolumeName, b.Spec.Strategy.Name)
+	// The strategy step already warned if this name is invalid.
+	cmdStrategy, _ := commandArg(b.Spec.Strategy.Name, strategyPlaceholder, validation.IsDNS1123Subdomain)
+	c.warnf("mountTrustedCA for BuildConfig %s relies on the OpenShift Cluster Network Operator injecting the cluster CA bundle into ConfigMap %q (label %s); on clusters without that injector the %s key stays absent and BuildRun pods will fail to mount the %q volume until the key is populated manually. The volume itself reached the shipped buildah and source-to-image ClusterBuildStrategies in strategy-catalog commit cb2432c, so check the target declares it before you apply: oc get clusterbuildstrategy %s -o jsonpath='{.spec.volumes[*].name}'. A catalog older than cb2432c declares no such volume and Shipwright refuses to register the Build (Registered=False, reason UndefinedVolume), whatever the strategy is called", bc.Name, cmName, InjectTrustedCABundleLabel, TrustedCABundleKey, TrustedCAVolumeName, cmdStrategy)
 
 	if name := b.Spec.Strategy.Name; name != defaultDockerStrategy && name != defaultS2IStrategy {
 		c.warnf("mountTrustedCA was mapped to the %q volume for BuildConfig %s, but the target ClusterBuildStrategy %q is not a shipped strategy — Shipwright will reject the Build (Registered=False, reason UndefinedVolume) unless the strategy declares a matching overridable volume: volumes: [{name: %s, overridable: true, emptyDir: {}}] plus a volumeMount on the build step", TrustedCAVolumeName, bc.Name, name, TrustedCAVolumeName)
@@ -1135,13 +1180,15 @@ func (c *Converter) processSource(bc *buildv1.BuildConfig, b *shipwrightv1beta1.
 				Timeout: &metav1.Duration{Duration: Timeout},
 			},
 		}
+		// Both commands below name the Build, which uniqueName may have rewritten,
+		// never the raw BuildConfig name (BUILD-2439).
 		if asFile := binary.AsFile; asFile != "" {
-			c.warnf("BuildConfig %s/%s has a binary source with asFile %q, so OpenShift placed the file streamed by oc start-build --from-file at that name in the build context. The Build has a Local source instead, which takes a directory: put the file in a directory as %q and start each build with 'shp build upload %s <directory>'. A BuildRun started any other way waits %s for the upload and then fails.", bc.Namespace, bc.Name, asFile, asFile, bc.Name, Timeout)
+			c.warnf("BuildConfig %s/%s has a binary source with asFile %q, so OpenShift placed the file streamed by oc start-build --from-file at that name in the build context. The Build has a Local source instead, which takes a directory: put the file in a directory as %q and start each build with 'shp build upload %s <directory>'. A BuildRun started any other way waits %s for the upload and then fails.", bc.Namespace, bc.Name, asFile, asFile, b.Name, Timeout)
 		} else {
 			// The .gitignore and outside-symlink differences are the ones
 			// Shipwright keeps on purpose; the upload bugs that have a fix
 			// in review stay out of this text (ADR-0011).
-			c.warnf("BuildConfig %s/%s was a binary build: each build used the files sent by oc start-build --from-dir, --from-archive or --from-repo. The new Build gets its files the same way, but through shp: run 'shp build upload %s <directory>' for every build. A build started any other way waits %s for files and then fails. shp does not send everything oc did: it skips files listed in the directory's .gitignore, such as a target/app.jar you built locally, and symlinks that point outside the directory.", bc.Namespace, bc.Name, bc.Name, Timeout)
+			c.warnf("BuildConfig %s/%s was a binary build: each build used the files sent by oc start-build --from-dir, --from-archive or --from-repo. The new Build gets its files the same way, but through shp: run 'shp build upload %s <directory>' for every build. A build started any other way waits %s for files and then fails. shp does not send everything oc did: it skips files listed in the directory's .gitignore, such as a target/app.jar you built locally, and symlinks that point outside the directory.", bc.Namespace, bc.Name, b.Name, Timeout)
 		}
 	} else if len(images) > 0 {
 		if len(images) > 1 {
@@ -1650,8 +1697,10 @@ func (c *Converter) processResources(bc *buildv1.BuildConfig, b *shipwrightv1bet
 		msg := fmt.Sprintf("The Build for BuildConfig %s/%s has a Local source, which starts only through 'shp build upload %s <directory>'. That command creates its own BuildRun, so the BuildRun template in annotation %s cannot start this Build.",
 			bc.Namespace, bc.Name, b.Name, BuildRunTemplateAnnotation)
 		if saName != "" {
+			// A generated name always passes; the BuildConfig's own may not (BUILD-2439).
+			cmdSA, _ := commandArg(saName, serviceAccountPlaceholder, validation.IsDNS1123Subdomain)
 			msg += fmt.Sprintf(" Pass the account the template names on the upload instead: shp build upload %s <directory> --sa-name %s. An upload that names no account runs as the namespace pipeline account, and a pull secret carried by %s is not used.",
-				b.Name, saName, saName)
+				b.Name, cmdSA, cmdSA)
 		}
 		if hasResources {
 			msg += fmt.Sprintf(" shp build upload has no flag for step resources, so each build runs with the strategy's default step resources. The resources set on the BuildConfig (%s) are recorded here, and in the template only when the strategy's step names are known.",
