@@ -42,16 +42,27 @@ paths instead. `$SKILL_DIR` is the directory containing this file.
 Resolve `$SKILL_DIR` once at the start:
 
 ```bash
-SKILL_DIR="$(git rev-parse --show-toplevel)/.claude/skills/deep-review"
-echo "$SKILL_DIR"
+# The session may have started in a folder outside this repo. Inside this repo or
+# one of its worktrees, use the checkout the session is in; anywhere else, use the
+# repo this skill file lives in.
+SKILL_HOME="$(cd -P "${CLAUDE_SKILL_DIR}" && pwd)"
+SKILL_REPO="$(git -C "$SKILL_HOME" rev-parse --path-format=absolute --git-common-dir)"
+HERE_REPO="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+if [ "$HERE_REPO" = "$SKILL_REPO" ]; then REPO_ROOT="$(git rev-parse --show-toplevel)"
+else REPO_ROOT="$(git -C "$SKILL_HOME" rev-parse --show-toplevel)"; fi
+SKILL_DIR="$REPO_ROOT/.claude/skills/deep-review"
+echo "REPO_ROOT=$REPO_ROOT"
+echo "SKILL_DIR=$SKILL_DIR"
 ls "$SKILL_DIR/vendor/sub-agents/" || { echo "vendor/ missing — run bin/sync"; exit 1; }
 ```
 
 Shell state does not survive from one Bash call to the next here, so `$SKILL_DIR`
 is empty in every later command and a path built from it resolves to `/SKILL.md`
 and reads as an empty file rather than an error you would notice. That is why the
-block prints it: use the printed literal path from here on, the way O13 says to
-for `$RUN_DIR`.
+block prints it: use the printed literal paths from here on, the way O13 says to
+for `$RUN_DIR`. `<REPO_ROOT>` below means the printed `REPO_ROOT` path; run every
+command that reads this repo's git state or files against it, never against the
+session's current folder.
 
 **Check that you were handed the current overrides.** The Skill tool resolves its
 own base directory, and inside a git worktree that is the main checkout rather
@@ -194,7 +205,13 @@ esac
 
 # A full URL naming a different repo wins over the local checkout.
 REPO_FULL_NAME="$(printf '%s' "$ARG" | sed -nE 's@^https?://[^/]+/([^/]+/[^/]+)/pull/.*@\1@p')"
-[ -n "$REPO_FULL_NAME" ] || REPO_FULL_NAME="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+THIS_REPO="$(cd '<REPO_ROOT>' && gh repo view --json nameWithOwner --jq .nameWithOwner)"
+[ -n "$REPO_FULL_NAME" ] || REPO_FULL_NAME="$THIS_REPO"
+# A URL may carry a repo's old name; GitHub redirects it. Use the name GitHub gives
+# now, so the compare with THIS_REPO in O6 holds and every later call uses one name.
+CANON="$(gh repo view "$REPO_FULL_NAME" --json nameWithOwner --jq .nameWithOwner 2>/dev/null)"
+[ -n "$CANON" ] || { echo "repo $REPO_FULL_NAME not found on GitHub"; exit 1; }
+REPO_FULL_NAME="$CANON"
 export PR_NUMBER REPO_FULL_NAME
 
 PR_INFO="$(gh pr view "$PR_NUMBER" --repo "$REPO_FULL_NAME" \
@@ -204,6 +221,7 @@ PR_STATE="${PR_INFO%%$'\t'*}"; PR_TITLE="${PR_INFO#*$'\t'}"
 
 # Always show what was resolved — this is the only chance to notice a bad parse.
 echo "reviewing $REPO_FULL_NAME#$PR_NUMBER — $PR_TITLE ($PR_STATE)"
+echo "this skill's repo: $THIS_REPO"
 [ "$PR_STATE" = "OPEN" ] \
   || { echo "PR #$PR_NUMBER is $PR_STATE — this skill reviews open PRs only."; exit 1; }
 ```
@@ -216,8 +234,21 @@ dispatching anything. Do not proceed on a non-`OPEN` PR.
 Append this to the **Context package** (vendored step 3d, Part 4) for every
 sub-agent. It is repo truth the upstream prompts cannot know.
 
-Read `$(git rev-parse --show-toplevel)/AGENTS.md` and include it, then add this
-verbatim block:
+What goes in depends on which repo the PR is in.
+
+- **`REPO_FULL_NAME` equals `THIS_REPO`**, both printed in O5 under the names GitHub
+  gives them now: read
+  `<REPO_ROOT>/AGENTS.md` and include it, then add the verbatim block below and
+  follow the `docs-currency` and `style-conventions` notes after it.
+- **`REPO_FULL_NAME` is any other repo** (only a URL can name one; a bare number
+  always means `THIS_REPO`): none of this repo's facts apply.
+  Include that repo's own `AGENTS.md` from its default branch if it has one,
+  `gh api "repos/$REPO_FULL_NAME/contents/AGENTS.md" --jq .content | base64 -d`, and
+  say so in the triage when it has none. Skip the invariants block and the
+  `docs-currency` note. The `style-conventions` note still holds, against that
+  repo's `AGENTS.md` and code.
+
+The block for this repo:
 
 ```markdown
 ### Repo invariants (migtools/crane-plugin-buildconfig-to-builds)
@@ -361,9 +392,9 @@ thing to tune.
 
 The lines under the box, and any question put to the user (the `--post`
 confirmation included), are drafted with the `plain-words` skill
-(`.claude/skills/plain-words/SKILL.md`) and use no override ids, dimension names or
+(`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`) and use no override ids, dimension names or
 step numbers without saying what they mean. A decision question, where the user
-picks between options, opens with `Kind:` from `.claude/skills/decision-kinds.md`
+picks between options, opens with `Kind:` from `${CLAUDE_SKILL_DIR}/../decision-kinds.md`
 and gives each option one `Gain:` and one `Cost:` line; the template is in
 `/tech-design`'s Clarifying gates. The review body meant for GitHub still goes
 through O11.
@@ -389,7 +420,7 @@ showing too much rather than too little. If that becomes noisy, raise this to
 ### O11. Write the review body with plain-words before sharing it
 
 Every review this skill shows or posts is prose a person reads. Write it with the
-`plain-words` skill (`.claude/skills/plain-words/SKILL.md`), which ships with this
+`plain-words` skill (`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`), which ships with this
 repo and carries `/unslop`'s rules, so it does not read as machine-generated: no
 em-dash pile-ups, no puffery, no boilerplate structure.
 

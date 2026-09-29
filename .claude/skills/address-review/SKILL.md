@@ -61,13 +61,13 @@ triage like any other review, because a posted comment cannot be checked against
   string.
 - Hand `/edit-pr` only the files the fix agents reported, listed literally. Never `git add .`.
 - Every reply posted on the PR is written with the `plain-words` skill
-  (`.claude/skills/plain-words/SKILL.md`), which carries `/unslop`'s rules; the footer is
+  (`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`), which carries `/unslop`'s rules; the footer is
   appended after, verbatim. Commit messages and the PR body are `/edit-pr`'s.
 - Text for the user (the Stage 3 table, each `ask` question, the summary) is drafted with
-  the `plain-words` skill (`.claude/skills/plain-words/SKILL.md`) and uses none of this
+  the `plain-words` skill (`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`) and uses none of this
   skill's own terms (stage numbers, verdict names) without saying what they mean. A
   decision question, where the user picks between options, opens with `Kind:` from
-  `.claude/skills/decision-kinds.md` and gives each option one `Gain:` and one `Cost:`
+  `${CLAUDE_SKILL_DIR}/../decision-kinds.md` and gives each option one `Gain:` and one `Cost:`
   line; the template is in `/tech-design`'s Clarifying gates.
 - Every Agent call passes `model`, and the ceiling is `opus`: triage and fix on Sonnet,
   the challenger on Opus. An omitted model inherits the session's, which may sit above
@@ -80,18 +80,29 @@ triage like any other review, because a posted comment cannot be checked against
 
 ```bash
 gh auth status >/dev/null 2>&1 || { echo "gh is not logged in"; exit 1; }
-UPSTREAM=$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/([^/]+)$#\1/\2#; s#\.git$##')
-FORK_OWNER=$(git remote get-url fork | sed -E 's#.*[:/]([^/]+)/[^/]+$#\1#')
-ROOT=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
 SKILL='<the base directory the harness printed for this skill>'
+# ROOT is the main checkout of the repo this skill lives in, so the skill works from a
+# session started in another folder too. IN_REPO says whether the session is inside it.
+SKILL_REPO=$(git -C "$SKILL" rev-parse --path-format=absolute --git-common-dir)
+HERE_REPO=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+ROOT=$(dirname "$SKILL_REPO")
+if [ "$HERE_REPO" = "$SKILL_REPO" ]; then IN_REPO=yes; else IN_REPO=no; fi
+UPSTREAM=$(git -C "$ROOT" remote get-url origin | sed -E 's#.*[:/]([^/]+)/([^/]+)$#\1/\2#; s#\.git$##')
+FORK_OWNER=$(git -C "$ROOT" remote get-url fork | sed -E 's#.*[:/]([^/]+)/[^/]+$#\1#')
+echo "ROOT=$ROOT IN_REPO=$IN_REPO UPSTREAM=$UPSTREAM FORK_OWNER=$FORK_OWNER"
 ```
+
+Every git call on the repo itself names it: `git -C "$ROOT"` before the worktree exists,
+`git -C "$WT"` after. Never rely on the session's current folder.
 
 Resolve `PR`:
 
 - number given: use it.
 - URL given: the number after `/pull/`:
   `PR=$(printf '%s' '<the URL as typed>' | sed -nE 's#.*/pull/([0-9]+).*#\1#p')`.
-- blank: `PR=$(gh pr list --repo "$UPSTREAM" --head "$FORK_OWNER:$(git branch --show-current)" --state open --json number --jq '.[0].number')`.
+- blank, with `IN_REPO=yes`: `PR=$(gh pr list --repo "$UPSTREAM" --head "$FORK_OWNER:$(git branch --show-current)" --state open --json number --jq '.[0].number')`.
+- blank, with `IN_REPO=no`: the session's folder says nothing about which PR is meant.
+  Stop and ask for the PR number.
 
 Stop with a plain sentence if `PR` is empty. Then:
 
@@ -114,17 +125,17 @@ PRs").
 Find the worktree holding `BRANCH`:
 
 ```bash
-WT=$(git worktree list --porcelain | grep -B2 -x "branch refs/heads/$BRANCH" | grep '^worktree ' | sed -E 's/^worktree //')
+WT=$(git -C "$ROOT" worktree list --porcelain | grep -B2 -x "branch refs/heads/$BRANCH" | grep '^worktree ' | sed -E 's/^worktree //')
 ```
 
 If empty, add one:
 
 ```bash
-git fetch fork "$BRANCH" --quiet
-if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-  git worktree add "$ROOT/.claude/worktrees/$BRANCH" "$BRANCH"
+git -C "$ROOT" fetch fork "$BRANCH" --quiet
+if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+  git -C "$ROOT" worktree add "$ROOT/.claude/worktrees/$BRANCH" "$BRANCH"
 else
-  git worktree add -b "$BRANCH" "$ROOT/.claude/worktrees/$BRANCH" "fork/$BRANCH"
+  git -C "$ROOT" worktree add -b "$BRANCH" "$ROOT/.claude/worktrees/$BRANCH" "fork/$BRANCH"
 fi
 WT="$ROOT/.claude/worktrees/$BRANCH"
 ```

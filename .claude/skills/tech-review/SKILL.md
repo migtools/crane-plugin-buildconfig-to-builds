@@ -34,7 +34,7 @@ If the user asks to review an open PR, or someone else's PR, say so and point at
 2. **All edits happen in a disposable worktree, never the user's checkout.** This skill
    reports; findings go to the terminal. The simplify pass (when the diff has Go) and
    `--fix` (on request) edit an isolated worktree of the branch created in Stage 0f — so the default path
-   leaves the user's repo byte-for-byte unchanged, and rollback is `git worktree remove`.
+   leaves the user's repo byte-for-byte unchanged, and rollback is removing that worktree.
    Nothing is committed, pushed, or written to Jira; commits and pushes belong to
    `/create-pr` and `/edit-pr` (`AGENTS.md` › Commit policy). The one exception is Stage
    0g's throwaway commit of the carried change. It lives only inside the disposable
@@ -62,9 +62,9 @@ If the user asks to review an open PR, or someone else's PR, say so and point at
    sub-agents that do the work. The ceiling caps, it never raises: a reviewer that ran
    on Sonnet before stays on Sonnet.
 10. **Talk to the user in plain words.** Every question and the Stage 6 verdict are drafted
-    with the `plain-words` skill (`.claude/skills/plain-words/SKILL.md`), and use no stage
+    with the `plain-words` skill (`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`), and use no stage
     or check ids without saying what they check. A decision question, where the user picks
-    between options, opens with `Kind:` from `.claude/skills/decision-kinds.md` and gives
+    between options, opens with `Kind:` from `${CLAUDE_SKILL_DIR}/../decision-kinds.md` and gives
     each option one `Gain:` and one `Cost:` line; the template is in `/tech-design`'s
     Clarifying gates.
 
@@ -77,7 +77,7 @@ The user invoked this with: $ARGUMENTS
 | `BUILD-XXXX` | Find the branch for this issue key |
 | branch name | Use it directly |
 | PR URL | Take the head branch from the PR; review it locally |
-| blank | Use the current branch |
+| blank | Use the current branch (`git -C "<HERE>" branch --show-current`). Only when the session is inside this repo (`IN_REPO=yes`, Setup check); from anywhere else, ask for the key or the branch |
 | `--fix` | After reporting, offer to apply findings. Off by default. |
 | `--cli=<name>` | Use only this CLI reviewer. `--cli=none` skips the tier. |
 
@@ -86,7 +86,23 @@ the branch; it does not turn this into a PR review, and nothing is ever posted.
 
 ## Setup check
 
-Read `repo.md` at the project root. Validate rather than merely finding it:
+The session may have started in a folder outside this repo. Find the repo from this
+skill's own folder, and whether the session is inside it:
+
+```bash
+SKILL_REPO=$(git -C "${CLAUDE_SKILL_DIR}" rev-parse --path-format=absolute --git-common-dir)
+HERE_REPO=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+ROOT=$(dirname "$SKILL_REPO")                 # the main checkout
+if [ "$HERE_REPO" = "$SKILL_REPO" ]; then IN_REPO=yes; HERE=$(git rev-parse --show-toplevel); else IN_REPO=no; HERE=; fi
+echo "ROOT=$ROOT IN_REPO=$IN_REPO HERE=$HERE"
+```
+
+Type the printed paths literally from here on. Every git call names its checkout with `-C`:
+`-C "<Crane Plugin Repo>"` for the repo, `-C "$WT"` for the review worktree. Never rely on
+the session's current folder.
+
+Read `repo.md` at the project root: `<HERE>/repo.md` with `IN_REPO=yes`, `<ROOT>/repo.md`
+otherwise. Validate rather than merely finding it:
 
 - `Crane Plugin Repo` and `Designs Directory` must be present.
 - No value may still contain `/path/to/` — the template ships placeholders, and a
@@ -123,16 +139,15 @@ None is a PR target for this work.
 ### 0a. Resolve the input to a branch
 
 ```bash
-cd "<Crane Plugin Repo>"
-git fetch origin main --quiet
-git fetch fork --quiet || true
+git -C "<Crane Plugin Repo>" fetch origin main --quiet
+git -C "<Crane Plugin Repo>" fetch fork --quiet || true
 ```
 
 For a `BUILD-XXXX` key, search local *and* remote refs — a fresh clone has no local
 branch for work that exists on the fork:
 
 ```bash
-git for-each-ref --format='%(refname)' refs/heads refs/remotes \
+git -C "<Crane Plugin Repo>" for-each-ref --format='%(refname)' refs/heads refs/remotes \
   | sed -E 's#^refs/heads/##; s#^refs/remotes/[^/]+/##' \
   | grep -E "BUILD-1234" | grep -vE '(^|/)main$' | sort -u
 ```
@@ -151,16 +166,16 @@ If none matches, re-run without `--quiet` and without stderr suppression to dist
 
 The match is a bare name (the prefixes were stripped for the ambiguity check). Resolve it
 to a ref git can actually use before going further — a branch that lives only on the fork
-has no local ref, so the bare name fails `git merge-base` and `git worktree add` with
+has no local ref, so the bare name fails `merge-base` and `worktree add` with
 "unknown revision". Prefer a local branch; fall back to the fork's remote-tracking ref.
 Do not create a local branch — the remote-tracking ref is a valid commit-ish everywhere
 `$BRANCH` is used below (`merge-base`, `--detach` worktree, `"$BRANCH"..origin/main`), so
 resolving it read-only keeps the user's repo untouched:
 
 ```bash
-if git show-ref --verify --quiet "refs/heads/$NAME"; then
+if git -C "<Crane Plugin Repo>" show-ref --verify --quiet "refs/heads/$NAME"; then
   BRANCH="$NAME"
-elif git show-ref --verify --quiet "refs/remotes/fork/$NAME"; then
+elif git -C "<Crane Plugin Repo>" show-ref --verify --quiet "refs/remotes/fork/$NAME"; then
   BRANCH="fork/$NAME"    # fork-only branch: use the remote-tracking ref directly
 else
   echo "no local or fork ref for $NAME"; exit 1
@@ -170,9 +185,9 @@ fi
 ### 0b. Compute the diff
 
 ```bash
-BASE=$(git merge-base origin/main "$BRANCH")
-git diff --no-ext-diff "$BASE" "$BRANCH" --stat
-git diff --no-ext-diff "$BASE" "$BRANCH" --name-only
+BASE=$(git -C "<Crane Plugin Repo>" merge-base origin/main "$BRANCH")
+git -C "<Crane Plugin Repo>" diff --no-ext-diff "$BASE" "$BRANCH" --stat
+git -C "<Crane Plugin Repo>" diff --no-ext-diff "$BASE" "$BRANCH" --name-only
 ```
 
 Use the merge base, not a two-dot endpoint diff. A two-dot `origin/main..BRANCH` reports
@@ -183,14 +198,14 @@ Count changed lines by summing the numstat columns rather than parsing the `--st
 summary line, whose field positions shift when insertions or deletions are zero:
 
 ```bash
-git diff --no-ext-diff --numstat "$BASE" "$BRANCH" \
-  | awk '{a+=$1; d+=$2} END {print a+d}'
+git -C "<Crane Plugin Repo>" diff --no-ext-diff --numstat "$BASE" "$BRANCH" \
+  | awk 'BEGIN { while ((getline line) > 0) { split(line, col, "\t"); n += col[1] + col[2] }; print n + 0 }'
 ```
 
 ### 0c. Branch freshness
 
 ```bash
-git rev-list --count "$BRANCH"..origin/main
+git -C "<Crane Plugin Repo>" rev-list --count "$BRANCH"..origin/main
 ```
 
 Non-zero means the branch is behind. Report it. If the branch is behind on files it also
@@ -220,9 +235,8 @@ an untracked file is never in it, so the file it actually uses is the one beside
 repo's common git directory:
 
 ```bash
-COMMON="$(git rev-parse --git-common-dir)"
-case "$COMMON" in /*) ;; *) COMMON="$PWD/$COMMON" ;; esac
-AGENT_FILE="$(cd "$(dirname "$COMMON")" && pwd)/agent.toml"
+COMMON="$(git -C "<Crane Plugin Repo>" rev-parse --path-format=absolute --git-common-dir)"
+AGENT_FILE="$(dirname "$COMMON")/agent.toml"
 [ -f "$AGENT_FILE" ] && echo "agent.toml: $AGENT_FILE" || echo "agent.toml: absent"
 ```
 
@@ -245,13 +259,13 @@ the output which it chose.
 Every stage that reads or edits code runs against a disposable worktree of the branch,
 not the shared checkout. This is what keeps the default path report-only: the simplify
 pass and `--fix` edit the worktree, so the user's repo is never touched and rollback is a
-single `git worktree remove`. It also fixes the review target — the worktree is the one
+single worktree removal. It also fixes the review target — the worktree is the one
 immutable copy every reviewer sees, even after the simplify pass edits it.
 
 ```bash
 SLUG="$(printf '%s' "$BRANCH" | tr '/' '-')"   # a fork-only ref is "fork/BUILD-1234"; keep it out of paths
 WT="$(mktemp -d)/tech-review-$SLUG"
-git worktree add --detach "$WT" "$BRANCH"
+git -C "<Crane Plugin Repo>" worktree add --detach "$WT" "$BRANCH"
 ```
 
 `$WT` is the working directory for Stages 2, 3, 4, and 7. `$BASE` is still the merge base,
@@ -274,7 +288,7 @@ mkdir -p "$SCRATCH"
 Remove both the worktree and the scratchpad when the run ends, including on any early exit:
 
 ```bash
-git worktree remove --force "$WT"
+git -C "<Crane Plugin Repo>" worktree remove --force "$WT"
 rm -rf "$SCRATCH"
 ```
 
@@ -287,7 +301,7 @@ uncommitted change into `$WT` before any stage reads it. Find the worktree that 
 branch checked out:
 
 ```bash
-SRC=$(git worktree list --porcelain | grep -B2 -x "branch refs/heads/$NAME" | grep '^worktree ' | sed -E 's/^worktree //')
+SRC=$(git -C "<Crane Plugin Repo>" worktree list --porcelain | grep -B2 -x "branch refs/heads/$NAME" | grep '^worktree ' | sed -E 's/^worktree //')
 git -C "$SRC" status --porcelain
 ```
 
@@ -340,7 +354,7 @@ Look for `<Designs Directory>/test-results/BUILD-XXXX-results.md`.
 | Jira status claims more than the evidence supports | Report the mismatch |
 
 ```bash
-git merge-base --is-ancestor "$RECORDED_SHA" "$BRANCH" \
+git -C "<Crane Plugin Repo>" merge-base --is-ancestor "$RECORDED_SHA" "$BRANCH" \
   && echo "evidence current" || echo "evidence predates branch head"
 ```
 
@@ -407,7 +421,7 @@ that skill's report mode. Nothing runs on the session model. Security depth is
 | `cli-review` (coderabbit) | **sub-agent** | `reviewers/cli-review.md` | sonnet | `coderabbit` on PATH and not excluded by `--cli` |
 | `cli-review` (qodo) | **sub-agent** | `reviewers/cli-review.md` | sonnet | `qodo` on PATH, `agent.toml` present, and not excluded by `--cli` |
 | `code-review` | **sub-agent** that forks the built-in `/code-review <target> low`, `<target>` being Stage 0g's `CARRIED_SHA` when it carried work, else `$BRANCH` | `reviewers/code-review.md` | opus | Always |
-| `tech-document` | **sub-agent** | the body of `.claude/skills/tech-document/SKILL.md`, with the argument line `<branch> --report --work "$WT"` | opus | Always |
+| `tech-document` | **sub-agent** | the body of `${CLAUDE_SKILL_DIR}/../tech-document/SKILL.md`, with the argument line `<branch> --report --work "$WT"` | opus | Always |
 
 `tech-document` maps the branch diff to the docs it touches, runs the documentation tests,
 and writes findings in the `findings-schema.md` shape with `source: tech-document`. It
@@ -429,11 +443,9 @@ waiting`), and once when the fork has finished and it has written
 for the file with the Monitor tool; a verdict built on the first return records
 `code-review` as `failed`.
 
-Resolve the prompt directory once:
-
-```bash
-SKILL_DIR="$(git rev-parse --show-toplevel)/.claude/skills/tech-review"
-```
+Resolve the prompt directory once. `SKILL_DIR` is `<HERE>/.claude/skills/tech-review` with
+`IN_REPO=yes` and `<ROOT>/.claude/skills/tech-review` otherwise, both printed by the Setup
+check.
 
 For every sub-agent, read the prompt file's body and pass it as the sub-agent prompt with
 `subagent_type: general-purpose` and the `model` from the table above, which matches the
@@ -536,7 +548,7 @@ If the upstream repo is not configured in `repo.md`, report SKIPPED with that re
 ### 5d. Test coverage parity
 
 ```bash
-git diff --no-ext-diff --name-only "$BASE" "$BRANCH" \
+git -C "<Crane Plugin Repo>" diff --no-ext-diff --name-only "$BASE" "$BRANCH" \
   | grep -E '\.go$' | grep -vE '_test\.go$|/fakes/|vendor/'
 ```
 
@@ -693,7 +705,7 @@ With `--fix`, edits still land in the worktree `$WT`, never the user's checkout:
 5. Emit the combined patch (the simplify pass + approved fixes). It is the diff against
    `$WT`'s index, so it holds only this run's edits and not the branch or the change 0g
    carried. The user applies it, uncommitted, in the branch's worktree with
-   `git apply <patch>`:
+   `git -C <that worktree> apply <patch>`:
 
    ```bash
    git -C "$WT" add --intent-to-add --all

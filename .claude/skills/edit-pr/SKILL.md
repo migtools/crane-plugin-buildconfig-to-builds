@@ -21,7 +21,7 @@ round, leaves its changes uncommitted and hands over here.
    subject prefix. They apply here unchanged. Commits are made with `git commit -s -S`;
    drop `-S` only when `git config user.signingkey` is empty.
 2. **Plain words.** The PR title, the PR body and every commit message are written with the
-   `plain-words` skill (`.claude/skills/plain-words/SKILL.md`), which carries `/unslop`'s
+   `plain-words` skill (`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`), which carries `/unslop`'s
    rules.
 3. **The trailer.** Every commit message ends with exactly this line, then the
    `Signed-off-by` line that `-s` adds:
@@ -54,7 +54,7 @@ round, leaves its changes uncommitted and hands over here.
 10. **Talking to the user.** The plan, every question and the report are drafted with
     `plain-words` and use no step numbers or other terms of this skill without saying what
     they mean. A decision question opens with `Kind:` from
-    `.claude/skills/decision-kinds.md` and gives each option one `Gain:` and one `Cost:`
+    `${CLAUDE_SKILL_DIR}/../decision-kinds.md` and gives each option one `Gain:` and one `Cost:`
     line; the template is in `/tech-design`'s Clarifying gates.
 11. **Shell guard.** When the session refuses a compound git command, write the stage to a
     script file in the scratchpad and run `bash <file>`, one git call per line, literal
@@ -65,21 +65,34 @@ round, leaves its changes uncommitted and hands over here.
 
 | Form | Meaning |
 |---|---|
-| blank | the open PR whose head is the current branch in the user's fork |
+| blank | the open PR whose head is the current branch in the user's fork. Only when the session is inside this repo; from anywhere else, ask for the PR |
 | `66` or a PR URL | that PR |
 | `BUILD-XXXX` | the open PR from the branch named for that story |
-| `--work <dir>` | the worktree holding the branch; otherwise found with `git worktree list` |
+| `--work <dir>` | the worktree holding the branch; otherwise found with `git -C <ROOT> worktree list` |
 | `--brief <file>` | what the new change does and which files it covers. `/address-review` writes one; the listed files are the only ones committed |
 | `--rebase <base-sha>` | rebase the PR's commits onto this main commit before placing any new work (Step 5). The caller names the exact commit so the result is the one the user approved. Conflicts replay from git rerere; one rerere cannot resolve is a stop |
 | `--approved <file>` | the user already approved this push in the calling skill. JSON `{"tree": <sha or null>, "by": <skill>}`. Step 4 prints the plan without asking. When `tree` is set, the new head's tree must equal it (Step 5). The Step 6 tests still gate the push |
 
 ## Step 1 — Find the PR, its branch and its worktree
 
-Run `/create-pr` Step 1 (auth, `fork` remote). Then:
+The session may have started in a folder outside this repo. Find
+the repo from this skill's own folder first:
 
 ```bash
-UPSTREAM=$(git remote get-url origin | sed -E 's#.*[:/]([^/]+)/([^/]+)$#\1/\2#; s#\.git$##')
-FORK_OWNER=$(git remote get-url fork | sed -E 's#.*[:/]([^/]+)/[^/]+$#\1#')
+SKILL_REPO=$(git -C "${CLAUDE_SKILL_DIR}" rev-parse --path-format=absolute --git-common-dir)
+HERE_REPO=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+ROOT=$(dirname "$SKILL_REPO")                 # the main checkout
+if [ "$HERE_REPO" = "$SKILL_REPO" ]; then IN_REPO=yes; HERE=$(git rev-parse --show-toplevel); else IN_REPO=no; HERE=; fi
+echo "ROOT=$ROOT IN_REPO=$IN_REPO HERE=$HERE"
+```
+
+Type the printed paths literally from here on. Then run `/create-pr` Step 1 (auth, `fork`
+remote) with these values; skip its own resolve block. A blank argument with `IN_REPO=no`
+names no branch: stop and ask for the PR. Then:
+
+```bash
+UPSTREAM=$(git -C "<ROOT>" remote get-url origin | sed -E 's#.*[:/]([^/]+)/([^/]+)$#\1/\2#; s#\.git$##')
+FORK_OWNER=$(git -C "<ROOT>" remote get-url fork | sed -E 's#.*[:/]([^/]+)/[^/]+$#\1#')
 gh pr view <PR> --repo "$UPSTREAM" --json number,state,headRefName,headRefOid,headRepositoryOwner,title,body,url
 ```
 
@@ -89,7 +102,7 @@ then `gh pr list --repo "$UPSTREAM" --head "$FORK_OWNER:$BRANCH" --state open`. 
 means this is `/create-pr`'s job: say so and stop.
 
 `WORK` is `--work` when given, else the worktree that has `$BRANCH` checked out (the
-`git worktree list --porcelain` lookup in `/create-pr` Step 3), else stop and ask. If the
+`git -C "<ROOT>" worktree list --porcelain` lookup in `/create-pr` Step 3), else stop and ask. If the
 session is isolated to a different worktree, switch into `$WORK` with EnterWorktree first.
 
 Check that the local branch sits on the PR head:
@@ -107,6 +120,7 @@ the rebase starts from what the fork has.
 ## Step 2 — Read what is there
 
 ```bash
+git -C "$WORK" reset HEAD      # IN_REPO=no only: the reset /create-pr Step 1 skipped
 git -C "$WORK" fetch origin main --quiet
 git -C "$WORK" log --format='%h %G? %s' origin/main..HEAD
 git -C "$WORK" status --short
