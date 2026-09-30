@@ -25,12 +25,12 @@ The user invoked this with: $ARGUMENTS
 |---|---|
 | `BUILD-XXXX` | Resolve the story branch across local refs (the same lookup `/create-pr` Step 3 uses). Exactly one match or ask. |
 | `<branch>` | Use this branch. |
-| none | The current checkout's branch, including uncommitted changes. |
+| none | The current checkout's branch (`git -C "<HERE>" branch --show-current`), including uncommitted changes. Only when the session is inside this repo (`IN_REPO=yes`, see Repo & Tool Map); from anywhere else, ask for the key or the branch. |
 | `--report` | Read-only. Write findings JSON for `/tech-review`, ask nothing, edit nothing. |
 | `--staged` | Examine the index only. `/create-pr` uses this before it commits. |
 | `--mechanical` | Apply a `keeper-test` proposal that is a verbatim template swap without asking. Everything else still asks. |
 | `--audit` | No diff. Check the doc map and the doc set against the whole tree; report drift, edit nothing. See **Audit mode** at the end. |
-| `--work <dir>` | The directory that holds the branch (a caller's worktree). Otherwise found with `git worktree list`; falls back to the current checkout. |
+| `--work <dir>` | The directory that holds the branch (a caller's worktree). Otherwise found with `git -C <Crane Plugin Repo> worktree list`; falls back to the current checkout. |
 | `--base <ref>` | Default `origin/main`, fetched first. |
 
 ## Iron rules
@@ -66,16 +66,31 @@ The user invoked this with: $ARGUMENTS
 
 The proposals, every `AskUserQuestion` prompt and option, the Docs record, and the
 compliance table are all drafted with the `plain-words` skill
-(`.claude/skills/plain-words/SKILL.md`), which carries `/unslop`'s rules. Run it once over
+(`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`), which carries `/unslop`'s rules. Run it once over
 the batch, not once per block. Use none of this skill's own terms in that text without
 saying what they mean. A decision question, where the user picks between options, opens
-with `Kind:` from `.claude/skills/decision-kinds.md` and gives each option one `Gain:` and
+with `Kind:` from `${CLAUDE_SKILL_DIR}/../decision-kinds.md` and gives each option one `Gain:` and
 one `Cost:` line; the template is in `/tech-design`'s Clarifying gates.
 
 ## Repo & Tool Map
 
-**All local paths come from `repo.md` at the project root.** If it does not exist, invoke
-`/setup-repos` and stop until it does. `<Crane Plugin Repo>` is the only repo whose docs
+The session may have started in a folder outside this repo. Find the repo from this
+skill's own folder, and whether the session is inside it:
+
+```bash
+SKILL_REPO=$(git -C "${CLAUDE_SKILL_DIR}" rev-parse --path-format=absolute --git-common-dir)
+HERE_REPO=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+ROOT=$(dirname "$SKILL_REPO")                 # the main checkout
+if [ "$HERE_REPO" = "$SKILL_REPO" ]; then IN_REPO=yes; HERE=$(git rev-parse --show-toplevel); else IN_REPO=no; HERE=; fi
+echo "ROOT=$ROOT IN_REPO=$IN_REPO HERE=$HERE"
+```
+
+Type the printed paths literally from here on. Every git call names its checkout with `-C`,
+never the session's current folder.
+
+**All local paths come from `repo.md` at the project root**: `<HERE>/repo.md` with
+`IN_REPO=yes`, `<ROOT>/repo.md` otherwise. If it does not exist, invoke `/setup-repos` and
+stop until it does. `<Crane Plugin Repo>` is the only repo whose docs
 this skill edits. If the branch also changed a ClusterBuildStrategy in the Strategy Catalog
 Repo, say so in the Docs record and stop at the boundary: that repo's docs are its own.
 
@@ -149,8 +164,8 @@ Stage 1, and the per-file ledger in Stage 3c are what catch those.
 ```bash
 CP="<Crane Plugin Repo>"
 BRANCH="<resolved as in the Arguments table>"
-WORK="${WORK:-$(git -C "$CP" worktree list --porcelain \
-  | awk -v b="refs/heads/$BRANCH" '/^worktree /{w=$2} $0=="branch "b{print w}')}"
+WORK="${WORK:-$(git -C "$CP" worktree list --porcelain | grep -B2 -xF "branch refs/heads/$BRANCH" \
+  | grep '^worktree ' | sed -E 's/^worktree //')}"
 WORK="${WORK:-$CP}"
 git -C "$WORK" fetch origin --quiet
 BASE="$(git -C "$WORK" merge-base "${BASE_REF:-origin/main}" HEAD)"
@@ -160,7 +175,7 @@ mkdir -p "$SCRATCH"
 
 If `$BRANCH` cannot be found, re-run the lookup without stderr suppression and report
 which failure it was. Two branches for one key: stop and ask. A detached worktree (what
-`/tech-review` builds, and what `git worktree add --detach` leaves) has no branch name:
+`/tech-review` builds, and any worktree added with `--detach`) has no branch name:
 use `HEAD` as `$BRANCH` and the short SHA in the scratch path.
 
 ### 0b. Compute the diff
@@ -248,7 +263,8 @@ grep -E '^[+-]func ' "$L" | sed -E 's/^[+-]func (\([^)]*\) )?([A-Za-z_][A-Za-z0-
 git -C "$WORK" ls-files 'buildconfig/*.go' main.go | grep -v '_test\.go$' | grep -vxF -f "$SCRATCH/changed.txt" > "$SCRATCH/other-files.txt"
 while read -r fn; do
   while read -r f; do
-    awk -v fn="$fn" '/^func /{cur=$0} !/^func / && cur && index($0, fn "(") {print cur}' "$WORK/$f" \
+    awk -v fn="$fn" 'BEGIN { while ((getline line) > 0) {
+        if (line ~ /^func /) cur = line; else if (cur != "" && index(line, fn "(")) print cur } }' "$WORK/$f" \
       | sed -E 's/^func (\([^)]*\) )?([A-Za-z_][A-Za-z0-9_]*)\(.*/\2/' \
       | sed "s|^|CALLER  $fn <- $f |"
   done < "$SCRATCH/other-files.txt"
@@ -282,11 +298,12 @@ done < "$SCRATCH/changed-funcs.txt" | sort -u > "$SCRATCH/callers.txt"
     grep -E '^-func Test' "$P" | grep -owE 'Test[A-Z][A-Za-z0-9_]+'
     grep -oE '(warnf|recordWarning|outcomeFailed|outcomeSkipped|Warnf?|Errorf?)\("([^"\\]|\\.)*"' "$L" \
       | sed -E 's/^[^"]*"//; s/"[^"]*$//' \
-      | awk '{ n = split($0, seg, /%[-+ #0-9.]*[a-zA-Z]/); best = ""
+      | awk 'BEGIN { while ((getline line) > 0) {
+               n = split(line, seg, /%[-+ #0-9.]*[a-zA-Z]/); best = ""
                for (i = 1; i <= n; i++) { s = seg[i]
                  gsub(/^[[:space:]:;,.—-]+|[[:space:]:;,.—-]+$/, "", s)
                  if (length(s) > length(best)) best = s }
-               if (length(best) >= 20) print best }'; } | sort -u
+               if (length(best) >= 20) print best } }'; } | sort -u
 } | tee "$SCRATCH/surfaces.txt"
 ```
 
@@ -346,7 +363,7 @@ Three sources, unioned:
 
    ```bash
    cd "$WORK"
-   { grep -E '^(PRESENT|UNMAPPED)' "$SCRATCH/docs.txt" | awk '{print $2}'
+   { sed -nE 's/^(PRESENT|UNMAPPED) //p' "$SCRATCH/docs.txt"
      [ -d docs/examples ] && ls docs/examples/*/README.md
      [ -d docs/adr ]      && ls docs/adr/[0-9]*.md; } | sort -u > "$SCRATCH/doclist.txt"
    sed -n '/^## identifiers/,$p' "$SCRATCH/surfaces.txt" | tail -n +2 | while IFS= read -r id; do
@@ -483,7 +500,7 @@ Three edits that always travel together:
 ### `--report` mode ends here
 
 Write `$SCRATCH/tech-document.json` in the shape `/tech-review`'s `findings-schema.md` defines
-(`.claude/skills/tech-review/findings-schema.md` in this repo). The skeleton:
+(`${CLAUDE_SKILL_DIR}/../tech-review/findings-schema.md` in this repo). The skeleton:
 
 ```json
 {
@@ -571,8 +588,8 @@ For each approved block, make the edit in `$WORK` and append its path to
        | while read -r l; do [ -e "$(dirname "$f")/$l" ] || echo "BROKEN $f -> $l"; done
    done < "$SCRATCH/edited.txt"
    # Fan-in: a new file under docs/ must be linked from its directory's index or the README.
-   { grep -E '^A[[:space:]]+docs/.*\.md$' "$SCRATCH/status.txt" | awk '{print $2}'
-     git status --porcelain | grep -E '^\?\? docs/.*\.md$' | awk '{print $2}'; } | sort -u \
+   { sed -nE 's#^A[[:space:]]+(docs/.*\.md)$#\1#p' "$SCRATCH/status.txt"
+     git -C "$WORK" status --porcelain | sed -nE 's#^\?\? (docs/.*\.md)$#\1#p'; } | sort -u \
    | while read -r f; do
        b="$(basename "$f")"; d="$(dirname "$f")"
        [ "$b" = README.md ] && b="$(basename "$d")"   # a new example is linked by its directory name

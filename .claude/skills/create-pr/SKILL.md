@@ -33,12 +33,12 @@ uncommitted for this one.
 - **Commit count:** aim for one commit. A large story may keep up to three when the
   user wants that. Squashing needs the user's yes (Step 3).
 - **Voice:** write the commit messages, the PR title and the PR body with the
-  `plain-words` skill (`.claude/skills/plain-words/SKILL.md`), which carries the
+  `plain-words` skill (`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`), which carries the
   `unslop` rules.
 - **Talking to the user:** every question, confirmation and the Step 10 report is drafted
-  with the `plain-words` skill (`.claude/skills/plain-words/SKILL.md`) and uses no step
+  with the `plain-words` skill (`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`) and uses no step
   numbers or other terms of this skill without saying what they mean. A decision question,
-  such as Step 3b's run-or-skip, opens with `Kind:` from `.claude/skills/decision-kinds.md`
+  such as Step 3b's run-or-skip, opens with `Kind:` from `${CLAUDE_SKILL_DIR}/../decision-kinds.md`
   and gives each option one `Gain:` and one `Cost:` line; the template is in
   `/tech-design`'s Clarifying gates.
 
@@ -50,17 +50,33 @@ The skill checks for an open PR in Step 3 and hands over to `/edit-pr` when it f
 
 ## Step 1 — Pre-flight
 
+The session may have started in a folder outside this repo. Find
+the repo from this skill's own folder, and whether the session is inside it:
+
 ```bash
-git reset HEAD          # clear anything already staged
-gh auth status 2>&1     # verify GitHub auth
+SKILL_REPO=$(git -C "${CLAUDE_SKILL_DIR}" rev-parse --path-format=absolute --git-common-dir)
+HERE_REPO=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+ROOT=$(dirname "$SKILL_REPO")                 # the main checkout
+if [ "$HERE_REPO" = "$SKILL_REPO" ]; then IN_REPO=yes; HERE=$(git rev-parse --show-toplevel); else IN_REPO=no; HERE=; fi
+echo "ROOT=$ROOT IN_REPO=$IN_REPO HERE=$HERE"
 ```
+
+Shell state does not survive between Bash calls: type the printed paths literally from
+here on. Every git call names its checkout with `-C`, never the session's current folder.
+
+```bash
+git -C "<HERE>" reset HEAD   # IN_REPO=yes only: clear anything already staged
+gh auth status 2>&1          # verify GitHub auth
+```
+
+With `IN_REPO=no` skip the reset here; Step 5 runs `git -C "$WORK" reset HEAD` first instead.
 
 If `gh auth status` fails, stop and tell the user to run `gh auth login`.
 
 Confirm a `fork` remote exists:
 
 ```bash
-git remote get-url fork 2>&1
+git -C "<ROOT>" remote get-url fork 2>&1
 ```
 
 If there is no `fork` remote, stop and tell the user to add one pointing at
@@ -112,13 +128,15 @@ branch first, then run every later git command against the directory that actual
    - With a `BUILD-XXXX` key, find its branch across local refs:
 
      ```bash
-     git for-each-ref --format='%(refname:short)' refs/heads \
+     git -C "<ROOT>" for-each-ref --format='%(refname:short)' refs/heads \
        | grep -E "BUILD-XXXX" | grep -vE '(^|/)main$' | sort -u
      ```
 
      Exactly one match → use it. Several → list and ask. None → fall back to the current
      branch, or Step 4 (create a branch) if the checkout is on `main`.
-   - No key → use the current branch (`git branch --show-current`).
+   - No key, `IN_REPO=yes` → use the current branch (`git -C "<HERE>" branch --show-current`).
+   - No key, `IN_REPO=no` → the session's folder names no branch. Ask for the Jira key or
+     the branch name; never guess.
 
 2. **Find that branch's working directory.** If it is checked out in a worktree, operate
    there; otherwise operate in the current checkout. Every git command in Steps 5–8 runs
@@ -126,15 +144,19 @@ branch first, then run every later git command against the directory that actual
    checkout — another session may share it.
 
    ```bash
-   WORK=$(git worktree list --porcelain \
-     | awk -v b="refs/heads/$BRANCH" '/^worktree /{w=$2} $0=="branch "b{print w}')
-   WORK=${WORK:-$(pwd)}
+   WORK=$(git -C "<ROOT>" worktree list --porcelain | grep -B2 -x "branch refs/heads/$BRANCH" \
+     | grep '^worktree ' | sed -E 's/^worktree //')
+   WORK=${WORK:-<HERE>}
    ```
 
-3. **Check for an open PR.** Derive the fork owner (Step 8) and look:
+   With `IN_REPO=no` and no worktree holding the branch, `WORK` stays empty: stop and ask
+   where the work is.
+
+3. **Check for an open PR.** Derive the fork owner (Step 8) and the upstream repo, and look:
 
    ```bash
-   gh pr list --head "<fork-owner>:$BRANCH" --state open --json number,title,url
+   UPSTREAM=$(git -C "<ROOT>" remote get-url origin | sed -E 's#.*[:/]([^/]+)/([^/]+)$#\1/\2#; s#\.git$##')
+   gh pr list --repo "$UPSTREAM" --head "<fork-owner>:$BRANCH" --state open --json number,title,url
    ```
 
    - **Open PR found** → stop. Tell the user the branch already has PR #N and that
@@ -189,12 +211,16 @@ If a Jira key exists, name the branch for the story
 kebab-case name (3-5 words, no `feat/` prefixes).
 
 ```bash
-git checkout -b <branch-name>
+git -C "$WORK" checkout -b <branch-name>
 ```
+
+With `IN_REPO=no`, `WORK` would be the main checkout, which another session may be using.
+Do not branch there; stop and ask the user to start the work in a worktree first.
 
 ## Step 5 — Stage files
 
 ```bash
+git -C "$WORK" reset HEAD      # IN_REPO=no only: the reset Step 1 skipped
 git -C "$WORK" status --short
 ```
 
@@ -319,7 +345,7 @@ the plain push is rejected. Preserve the fork's current tip as an `archive/*` ta
 **push the tag before the branch**, then force-with-lease — never a plain force-push:
 
 ```bash
-FORK_OWNER=$(git remote get-url fork | sed -E 's#.*[:/]([^/]+)/[^/]+$#\1#')
+FORK_OWNER=$(git -C "$WORK" remote get-url fork | sed -E 's#.*[:/]([^/]+)/[^/]+$#\1#')
 git -C "$WORK" fetch fork "$BRANCH"    # refresh fork/$BRANCH so the tag captures the real tip
 git -C "$WORK" tag "archive/$FORK_OWNER-old-$BRANCH" "fork/$BRANCH"
 git -C "$WORK" push fork "archive/$FORK_OWNER-old-$BRANCH"
@@ -328,17 +354,19 @@ git -C "$WORK" push -u --force-with-lease fork "$BRANCH:$BRANCH"
 
 ## Step 8 — Open the PR
 
-The PR always targets `main` on the upstream repo. `gh` uses `origin` (the
-upstream) as the base repo, and we push the branch to `fork`, so pass
-`--head <fork-owner>:<branch>` to open the PR from the fork.
+The PR always targets `main` on the upstream repo. `origin` is the upstream, so name
+it with `--repo` rather than letting `gh` read the repo from the session's folder, and we
+push the branch to `fork`, so pass `--head <fork-owner>:<branch>` to open the PR from the
+fork.
 
 Derive the fork owner from the remote URL. The `fork` remote is SSH
 (`git@github.com:<owner>/<repo>.git`), so pull the owner from between `:` and
 the last `/`:
 
 ```bash
-FORK_OWNER=$(git remote get-url fork | sed -E 's#.*[:/]([^/]+)/[^/]+$#\1#')
+FORK_OWNER=$(git -C "$WORK" remote get-url fork | sed -E 's#.*[:/]([^/]+)/[^/]+$#\1#')
 [ -n "$FORK_OWNER" ] || { echo "could not derive fork owner"; exit 1; }
+UPSTREAM=$(git -C "<ROOT>" remote get-url origin | sed -E 's#.*[:/]([^/]+)/([^/]+)$#\1/\2#; s#\.git$##')
 ```
 
 Draft the PR title and body with the `plain-words` skill. The title matches the commit
@@ -376,7 +404,7 @@ reviewer who does not see the line cannot tell it from a pass that never ran.
 Write the body to a file with the Write tool, then open the PR:
 
 ```bash
-gh pr create --base main --head "$FORK_OWNER:$BRANCH" \
+gh pr create --repo "$UPSTREAM" --base main --head "$FORK_OWNER:$BRANCH" \
   --title "<title>" --body-file <body file>
 ```
 

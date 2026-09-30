@@ -52,15 +52,33 @@ The user invoked this with: $ARGUMENTS
 Run each line as its own Bash call: a session isolated to a worktree refuses a git call
 chained with pipes or other commands.
 
+The session may have started in a folder outside this repo, so every git call names
+the repo as `-C <ROOT>`. Find `ROOT` first, with the skill's base directory typed
+literally:
+
 ```bash
-git remote get-url origin
-git fetch origin main --quiet
-git rev-parse origin/main
+git -C '<the base directory the harness printed for this skill>' rev-parse --path-format=absolute --git-common-dir
+```
+
+`ROOT` is that path without the trailing `/.git`: the main checkout. Check whether the
+session itself is inside this repo:
+
+```bash
+git rev-parse --path-format=absolute --git-common-dir
+```
+
+The session is inside the repo when this prints the same path as the call above; an error or
+another path means it is not. Then:
+
+```bash
+git -C <ROOT> remote get-url origin
+git -C <ROOT> fetch origin main --quiet
+git -C <ROOT> rev-parse origin/main
 mkdir -p "${TMPDIR:-/tmp}/babysit-prs"
 ```
 
-`SLUG` is `OWNER/REPO` from the first line (drop the host and `.git`). `BASE` is the third
-line. Type both literally into every later command.
+`SLUG` is `OWNER/REPO` from the first of these lines (drop the host and `.git`). `BASE` is
+the third line. Type both literally into every later command.
 
 ## Stage 1: Gather (read-only)
 
@@ -76,8 +94,8 @@ line. Type both literally into every later command.
    literal values, and run `bash` on it:
 
    ```bash
-   git fetch fork <branch>
-   git worktree add --detach <SCRATCH>/wt-<n> fork/<branch>
+   git -C <ROOT> fetch fork <branch>
+   git -C <ROOT> worktree add --detach <SCRATCH>/wt-<n> fork/<branch>
    git -C <SCRATCH>/wt-<n> -c rerere.enabled=true rebase <BASE>
    ```
 
@@ -104,7 +122,7 @@ line. Type both literally into every later command.
 4. For each `e2e` check: `gh run view <run_id> --repo <SLUG> --log-failed | tail -60`, and
    one line of suspected cause for the table. No fix.
 5. For each PR, check whether a local worktree already holds its branch
-   (`git worktree list --porcelain`) and, if so, whether it has uncommitted changes
+   (`git -C <ROOT> worktree list --porcelain`) and, if so, whether it has uncommitted changes
    (`git -C <wt> status --porcelain`, one call per worktree). Uncommitted work means
    someone, often another session, is mid-change on that PR: plan nothing for it and list it
    under "needs you: uncommitted work in <wt>". Its triage would read that work as if it
@@ -158,16 +176,18 @@ worktrees (Stage 4).
 
 For each PR with approved rows:
 
-1. Find the worktree that has the branch checked out (`git worktree list --porcelain`), or
-   create one under `.claude/worktrees/<branch>` from `fork/<branch>`. Switch in with
-   EnterWorktree.
-2. **Rebase or CI fix approved.** Apply the CI fix with `git apply <SCRATCH>/ci-fix-<n>.diff`.
+1. Find the worktree that has the branch checked out (`git -C <ROOT> worktree list --porcelain`), or
+   create one under `<ROOT>/.claude/worktrees/<branch>` from `fork/<branch>`. Call it `<wt>`.
+   When the session is inside the repo (Stage 0), switch in with EnterWorktree. From a
+   session outside it, do not switch: EnterWorktree cannot move into another repo's
+   worktree, and the `-C <wt>` calls below reach it from anywhere.
+2. **Rebase or CI fix approved.** Apply the CI fix with `git -C <wt> apply <SCRATCH>/ci-fix-<n>.diff`.
    Write a brief to `$SCRATCH/brief-<n>.md` with the Write tool: `Files:` the fix's files;
    `Change:` one plain line per fix; `Tests:` the command that went red to green. Write
    `{"tree": "<tree>", "by": "babysit-prs"}` to `$SCRATCH/approved-<n>.json`. Then run
    `/edit-pr <n> --work <wt> --approved <SCRATCH>/approved-<n>.json`, adding
    `--brief <SCRATCH>/brief-<n>.md` when there is a fix and `--rebase <BASE>` when a rebase
-   was approved. Check afterwards that `git ls-remote fork refs/heads/<branch>` shows the new
+   was approved. Check afterwards that `git -C <wt> ls-remote fork refs/heads/<branch>` shows the new
    head; if not, record why and go to the next PR.
 3. **Re-runs approved.** `gh run rerun <run_id> --failed --repo <SLUG>`.
 4. **Reviews approved.** `/address-review <n> --approved <SCRATCH>/review-<n>.json`. It
@@ -189,5 +209,5 @@ Written with `plain-words`, three lists:
 - **Needs you:** conflicts left alone, CI it could not fix, `e2e` and `main-red` failures,
   review comments that arrived after approval.
 
-Then remove each throwaway worktree with `git worktree remove --force <SCRATCH>/wt-<n>`,
+Then remove each throwaway worktree with `git -C <ROOT> worktree remove --force <SCRATCH>/wt-<n>`,
 one call per line from a script file, and delete `$SCRATCH`.
