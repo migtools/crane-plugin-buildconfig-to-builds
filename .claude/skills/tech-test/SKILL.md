@@ -59,7 +59,23 @@ proof of absence until you have checked it did not also return an error.
 
 ## Repo & Tool Map
 
-**All local paths come from `repo.md` at the project root. Never hardcode a path.**
+The session may have started in a folder outside this repo. Find the repo from this
+skill's own folder, and whether the session is inside it:
+
+```bash
+SKILL_REPO=$(git -C "${CLAUDE_SKILL_DIR}" rev-parse --path-format=absolute --git-common-dir)
+HERE_REPO=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+ROOT=$(dirname "$SKILL_REPO")                 # the main checkout
+if [ "$HERE_REPO" = "$SKILL_REPO" ]; then IN_REPO=yes; HERE=$(git rev-parse --show-toplevel); else IN_REPO=no; HERE=; fi
+echo "ROOT=$ROOT IN_REPO=$IN_REPO HERE=$HERE"
+```
+
+Type the printed paths literally from here on. Every git call names its checkout with `-C`:
+`-C "<Crane Plugin Repo>"` for the repo, `-C "$WT"` for the test worktree. Never rely on
+the session's current folder.
+
+**All local paths come from `repo.md` at the project root**: `<HERE>/repo.md` with
+`IN_REPO=yes`, `<ROOT>/repo.md` otherwise. **Never hardcode a path.**
 
 If `repo.md` does not exist, invoke `/setup-repos` and stop until it does.
 
@@ -95,7 +111,9 @@ Run at the start of **both** stages.
 cat "$SKILL_DIR/MEMORY.md"
 ```
 
-`$SKILL_DIR` is the directory holding this file. `MEMORY.md` ships next to it.
+`$SKILL_DIR` is `<HERE>/.claude/skills/tech-test` with `IN_REPO=yes` and
+`<ROOT>/.claude/skills/tech-test` otherwise, both printed by the Repo & Tool Map block.
+`MEMORY.md` ships next to this file.
 
 If gstack is installed, also read its store — it is optional and its absence is not an
 error:
@@ -123,9 +141,9 @@ These override everything below.
    `main` is a PASS for code nobody wrote.
 2. **Never check out in the user's clone.** Other agents share that checkout, its index and
    its HEAD. Use a worktree, or read the tree without checking out.
-3. **Diff with three dots against fetched `origin/main`.** `git fetch origin main` then
-   `git diff origin/main...HEAD`. Two dots reports `main`'s own content as a removal when
-   the branch is behind; a stale local `main` misattributes already-merged commits.
+3. **Diff with three dots against fetched `origin/main`.** `git -C "$WT" fetch origin main`
+   then `git -C "$WT" diff origin/main...HEAD`. Two dots reports `main`'s own content as a
+   removal when the branch is behind; a stale local `main` misattributes already-merged commits.
 4. **Do not silence errors.** `2>/dev/null` is permitted only where the command's failure
    *is* the answer being tested, and then the exit code must be read explicitly. Everywhere
    else it converts a real failure into an empty result. An `oc get` against a namespace
@@ -160,10 +178,10 @@ These override everything below.
 11. **Delete only what this skill created.** A namespace, strategy or gist that already
     existed is the user's. Ask before touching it.
 12. **Talk to the user in plain words.** Every question, the U7 report and the Compliance
-    Report are drafted with the `plain-words` skill (`.claude/skills/plain-words/SKILL.md`),
+    Report are drafted with the `plain-words` skill (`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`),
     and use no stage ids or other terms of this skill without saying what they mean. A
     decision question, where the user picks between options, opens with `Kind:` from
-    `.claude/skills/decision-kinds.md` and gives each option one `Gain:` and one `Cost:`
+    `${CLAUDE_SKILL_DIR}/../decision-kinds.md` and gives each option one `Gain:` and one `Cost:`
     line; the template is in `/tech-design`'s Clarifying gates.
 
 ---
@@ -174,8 +192,9 @@ No cluster. Safe to run anywhere, including CI-like environments and a fresh clo
 
 ## U0 — Validate setup
 
-Read and **validate** `repo.md`. Existence is not enough — a hand-edited file can still hold
-template placeholders.
+Run the Repo & Tool Map block first. Then read and **validate** `repo.md`
+(`<HERE>/repo.md` with `IN_REPO=yes`, `<ROOT>/repo.md` otherwise). Existence is not
+enough — a hand-edited file can still hold template placeholders.
 
 - Absent → invoke `/setup-repos` and stop.
 - A required label missing, a path containing `/path/to/`, or a path that does not exist on
@@ -189,9 +208,8 @@ Search local and remote refs. A branch pushed to the fork but never checked out 
 invisible to `git branch`.
 
 ```bash
-cd "<Crane Plugin Repo>"
-git fetch --all --quiet
-git for-each-ref --format='%(refname:short)' \
+git -C "<Crane Plugin Repo>" fetch --all --quiet
+git -C "<Crane Plugin Repo>" for-each-ref --format='%(refname:short)' \
   refs/heads refs/remotes | grep "BUILD-XXXX"
 ```
 
@@ -203,7 +221,7 @@ A branch name given instead of a key is matched whole across the same refs, afte
 remote prefix is stripped, so a branch that lives only on the fork still resolves:
 
 ```bash
-git for-each-ref --format='%(refname)' refs/heads refs/remotes \
+git -C "<Crane Plugin Repo>" for-each-ref --format='%(refname)' refs/heads refs/remotes \
   | sed -E 's#^refs/heads/##; s#^refs/remotes/[^/]+/##' | sort -u | grep -Fx -- "<branch>"
 ```
 
@@ -215,10 +233,10 @@ Other agents share this checkout. Work in a worktree, and confirm it has its own
 
 ```bash
 WT="$(mktemp -d)/tt-BUILD-XXXX"
-git worktree add --detach "$WT" "<resolved-branch>"   # --detach: the branch is usually checked out elsewhere
-cd "$WT"
-git rev-parse --git-path index    # must be under .git/worktrees/, not the shared index
-git rev-parse --short HEAD        # detached, so --show-current prints nothing; check the SHA instead
+git -C "<Crane Plugin Repo>" worktree add --detach "$WT" "<resolved-branch>"   # --detach: the branch is usually checked out elsewhere
+cd "$WT"                                   # the go commands below run here
+git -C "$WT" rev-parse --git-path index    # must be under .git/worktrees/, not the shared index
+git -C "$WT" rev-parse --short HEAD        # detached, so --show-current prints nothing; check the SHA instead
 ```
 
 The branch ref holds committed work only, and a story branch's work usually sits
@@ -229,7 +247,7 @@ patch, the untracked files, `add --all`, `write-tree`), with a `mktemp -d` scrat
 directory, and change nothing in the source worktree. Test that tree, and put its tree id
 in the report beside the SHA. With nothing to carry, say so.
 
-Remove the worktree at the end of the stage: `git worktree remove "$WT"`.
+Remove the worktree at the end of the stage: `git -C "<Crane Plugin Repo>" worktree remove "$WT"`.
 
 ## U3 — Compile gate
 
@@ -248,15 +266,15 @@ misattributed to the branch later.
 ## U4 — Diff review
 
 ```bash
-git fetch origin main --quiet
-git diff origin/main...HEAD --stat
+git -C "$WT" fetch origin main --quiet
+git -C "$WT" diff origin/main...HEAD --stat
 ```
 
 If the delta touches files outside the issue's scope, check whether those commits are
 already upstream before calling it scope creep:
 
 ```bash
-git merge-base --is-ancestor "<sha>" origin/main && echo "already on main"
+git -C "$WT" merge-base --is-ancestor "<sha>" origin/main && echo "already on main"
 ```
 
 ## U5 — Unit tests
@@ -320,7 +338,7 @@ echo '<resource JSON>' | "$WT_BIN/crane-plugin" 2>&1
 diff is stronger evidence than any single BuildRun.
 
 ```bash
-git archive origin/main | tar -x -C "$BASE_DIR"
+git -C "$WT" archive origin/main | tar -x -C "$BASE_DIR"
 (cd "$BASE_DIR" && GOWORK=off go build -o "$WT_BIN/crane-plugin-main" .)
 diff <("$WT_BIN/crane-plugin" < input.json) <("$WT_BIN/crane-plugin-main" < input.json)
 ```
@@ -563,9 +581,8 @@ ago. Applying under an unmanaged name from the start avoids this entirely.
 Read it from the branch without checking out:
 
 ```bash
-cd "<Strategy Catalog Repo>"
-git fetch --all --quiet
-git show "<story-branch>:clusterBuildStrategy/buildah/buildah.yaml" > "$WORK/strategy.yaml"
+git -C "<Strategy Catalog Repo>" fetch --all --quiet
+git -C "<Strategy Catalog Repo>" show "<story-branch>:clusterBuildStrategy/buildah/buildah.yaml" > "$WORK/strategy.yaml"
 ```
 
 Rename and apply:
@@ -884,7 +901,7 @@ never a blind `delete ""`:
 [ -f "$WORK/created-ns" ]    && oc delete project "$NS" --wait=true --timeout=120s
 [ -f "$WORK/created-strat" ] && [ -n "$STRAT" ] && oc delete clusterbuildstrategy "$STRAT"
 [ -f "$WORK/gist-url" ]      && gh gist delete "$(cat "$WORK/gist-url")" --yes
-[ -n "$WT" ]   && git worktree remove "$WT"
+[ -n "$WT" ]   && git -C "<Crane Plugin Repo>" worktree remove "$WT"
 [ -n "$WORK" ] && rm -rf "$WORK"
 ```
 

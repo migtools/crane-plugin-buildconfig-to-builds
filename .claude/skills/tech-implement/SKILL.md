@@ -38,18 +38,33 @@ without a design doc is how unresearched assumptions reach a PR.
 ## Voice — plain words for everything the user reads
 
 Draft any summary, question, report, or completion banner the user sees with the
-`plain-words` skill (`.claude/skills/plain-words/SKILL.md`), which carries `/unslop`'s
+`plain-words` skill (`${CLAUDE_SKILL_DIR}/../plain-words/SKILL.md`), which carries `/unslop`'s
 rules. This covers the Phase 0 "Ready to proceed?" summary, every `AskUserQuestion` prompt
 and option, and the final Compliance Report / Completion Status. Use none of this skill's
 own terms in that text (phase numbers, gate names) without saying what they mean. A decision
 question, where the user picks between options, opens with `Kind:` from
-`.claude/skills/decision-kinds.md` and gives each option one `Gain:` and one `Cost:` line;
+`${CLAUDE_SKILL_DIR}/../decision-kinds.md` and gives each option one `Gain:` and one `Cost:` line;
 the template is in `/tech-design`'s Clarifying gates. The commit message and the PR body
 are `/create-pr`'s, and it writes them with `plain-words` too.
 
 ## Repo & Tool Map
 
-**All local paths come from `repo.md` at the project root. Never hardcode a path.**
+The session may have started in a folder outside this repo. Find the repo from this
+skill's own folder, and whether the session is inside it:
+
+```bash
+SKILL_REPO=$(git -C "${CLAUDE_SKILL_DIR}" rev-parse --path-format=absolute --git-common-dir)
+HERE_REPO=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+ROOT=$(dirname "$SKILL_REPO")                 # the main checkout
+if [ "$HERE_REPO" = "$SKILL_REPO" ]; then IN_REPO=yes; HERE=$(git rev-parse --show-toplevel); else IN_REPO=no; HERE=; fi
+echo "ROOT=$ROOT IN_REPO=$IN_REPO HERE=$HERE"
+```
+
+Type the printed paths literally from here on. Every git call names its checkout with `-C`,
+never the session's current folder.
+
+**All local paths come from `repo.md` at the project root**: `<HERE>/repo.md` with
+`IN_REPO=yes`, `<ROOT>/repo.md` otherwise. **Never hardcode a path.**
 
 If `repo.md` does not exist, invoke `/setup-repos` and stop until it does.
 
@@ -105,8 +120,9 @@ When the work is merged, remove it: `git -C "$CP" worktree remove "$WT"`.
 
 ## Phase 0: Read the Design Doc, Validate Setup
 
-1. Read and **validate** `repo.md`. Existence is not enough — a hand-edited file can still
-   hold template placeholders.
+1. Run the Repo & Tool Map block, then read and **validate** `repo.md` (`<HERE>/repo.md`
+   with `IN_REPO=yes`, `<ROOT>/repo.md` otherwise). Existence is not enough — a
+   hand-edited file can still hold template placeholders.
 
    - If it is absent, invoke `/setup-repos` and stop.
    - If a required label is missing, or a path still contains `/path/to/`, or a configured
@@ -346,7 +362,8 @@ Hard-won from previous implementations, same as the cluster list above.
    about missing methods (e.g. `Apply` on a mock, `runtime.ApplyConfiguration`) come from
    the workspace resolving a newer dependency than CI. Validate with `GOWORK=off go test`
    before trusting or "fixing" them; never edit committed files to satisfy workspace-only
-   errors. See the workspace-parity section in the project `CLAUDE.md`.
+   errors. See the workspace note in the repo's `AGENTS.md` (`<HERE>/AGENTS.md` with
+   `IN_REPO=yes`, `<ROOT>/AGENTS.md` otherwise), which its `CLAUDE.md` imports.
 
 ## Phase 3: Implement
 
@@ -354,7 +371,7 @@ Order matters — a conversion that references a strategy parameter cannot be te
 that parameter exists.
 
 **Before deleting or renaming any symbol** (function, struct field, constant, or a warning
-string that tests assert on), `git grep` every affected identifier across both `*.go` and
+string that tests assert on), `git -C "$WT" grep` every affected identifier across both `*.go` and
 `*_test.go` and reconcile every hit. The design doc's Files Reference is a starting point,
 not a guarantee — a test file it never lists can still exercise the code you are removing,
 and it will only surface as a suite failure later.
