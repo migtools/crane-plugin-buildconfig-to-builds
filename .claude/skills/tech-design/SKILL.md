@@ -155,7 +155,7 @@ decision needs your call." The Phase 1 checkpoint still names the topic and cere
 class, because the human confirms them, but says in the same breath what each one means.
 
 Every decision question opens, under its title line, with `Kind:` and its kind from
-[`../decision-kinds.md`](../decision-kinds.md). The kind tells the human what sort of
+`${CLAUDE_SKILL_DIR}/../decision-kinds.md`. The kind tells the human what sort of
 call this is before they read the options, and a scope or architecture question gets
 more of their attention than a mapping one.
 
@@ -295,7 +295,22 @@ If this fails, tell the user to run `/jira-setup`.
 
 ## Repo Map
 
-**All local paths come from `repo.md` at the project root. Never hardcode a path.**
+The session may have started in a folder outside this repo. Find the repo from this
+skill's own folder, and whether the session is inside it:
+
+```bash
+SKILL_REPO=$(git -C "${CLAUDE_SKILL_DIR}" rev-parse --path-format=absolute --git-common-dir)
+HERE_REPO=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+ROOT=$(dirname "$SKILL_REPO")                 # the main checkout
+if [ "$HERE_REPO" = "$SKILL_REPO" ]; then IN_REPO=yes; HERE=$(git rev-parse --show-toplevel); else IN_REPO=no; HERE=; fi
+echo "ROOT=$ROOT IN_REPO=$IN_REPO HERE=$HERE"
+```
+
+Type the printed paths literally from here on. Every git call names its checkout with `-C`,
+never the session's current folder.
+
+**All local paths come from `repo.md` at the project root**: `<HERE>/repo.md` with
+`IN_REPO=yes`, `<ROOT>/repo.md` otherwise. **Never hardcode a path.**
 If `repo.md` does not exist, invoke `/setup-repos` and stop until it does.
 
 | Label | Read when | Question it answers | Feeds |
@@ -374,7 +389,8 @@ a sign of life during Phase 3.
 
 ## Phase 0: Setup (once per session)
 
-1. Read and **validate** `repo.md`. Existence is not enough.
+1. Run the Repo Map block, then read and **validate** `repo.md` (`<HERE>/repo.md` with
+   `IN_REPO=yes`, `<ROOT>/repo.md` otherwise). Existence is not enough.
    - Absent: invoke `/setup-repos` and stop.
    - Any required label missing, any path containing `/path/to/`, or any configured path
      absent on disk: report exactly which entries are bad and stop with **BLOCKED**.
@@ -548,8 +564,9 @@ first, and any issue this blocks or is blocked by.
 A closed blocker is not a shipped blocker. Jira closes a story when its PR merges, and
 this story may need what that PR produces, which is a later event. Name the artifact
 this story consumes and check that it exists. For an upstream code change that is a tag
-containing the commit, not a merged PR, and `git tag --contains <sha>` on the upstream
-clone answers it in one line. BUILD-2334 arrived with BUILD-1743 Closed and its PR merged
+containing the commit, not a merged PR, and
+`git -C "<Upstream Shipwright Build Repo>" tag --contains <sha>` answers it in one line.
+BUILD-2334 arrived with BUILD-1743 Closed and its PR merged
 on Shipwright `main`, while every tag cut since came from a release branch without it.
 Read as "blocker closed", the story looked ready. Read as "artifact missing", it was a
 wait, and `blocked-on` below is where it goes.
